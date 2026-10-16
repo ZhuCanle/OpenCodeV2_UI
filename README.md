@@ -94,9 +94,6 @@ Press `Cmd+Shift+Esc` (Mac) or `Ctrl+Shift+\` (Win/Linux) to open the connection
 
 *Your last connection settings (address, mode, password) are remembered automatically.*
 
-<!-- TODO(screenshots): images/1.png .. images/6.png still show the old plugin name and the previous
-     keyboard shortcuts. Re-shoot them before publishing to the Marketplace. -->
-
 ![Step 1: Launch OpenCode](images/1.png)
 
 ### 2. Send Code Context to OpenCode
@@ -136,8 +133,7 @@ When OpenCode edits files, the plugin opens a native IDE diff viewer.
 - **Reject**: Restores the file to its state before the AI started editing. Automatically opens the next file.
 - **Local Modified**: The diff title shows `(Local Modified)` when your file differs from AI output.
 
-![Diff Viewer - Accept](images/5.png)
-![Diff Viewer - Reject](images/6.png)
+![Diff Viewer](images/5.png)
 
 ### 5. Task Notifications
 
