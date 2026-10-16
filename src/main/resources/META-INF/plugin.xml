@@ -1,18 +1,18 @@
 <!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
   <id>com.zhucanle.opencodev2.ide</id>
-  <name>OpenCode V2 UI</name>
+  <name>OpenCode V2 UI (unofficial)</name>
   <vendor url="https://github.com/ZhuCanle/OpenCodeV2_UI">zclyde</vendor>
   
 
   <description><![CDATA[
-    <b>OpenCode V2 UI - AI Coding Agent for JetBrains IDEs</b><br><br>
+    <b>OpenCode V2 UI (unofficial) - AI Coding Agent for JetBrains IDEs</b><br><br>
     
     Seamlessly integrates <a href="https://opencode.ai">OpenCode</a> directly into your workflow.<br><br>
     
     <b>Key Features:</b><br>
     <ul>
-        <li><b>Quick Launch:</b> Connect to existing OpenCode server (e.g., OpenCode Desktop) or create new terminal with <code>Cmd+Shift+Esc</code> / <code>Ctrl+Shift+\</code>. Supports automatic authentication and optional password input.</li>
+        <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+Shift+Esc</code> / <code>Ctrl+Shift+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
         <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+Shift+K</code> / <code>Ctrl+Alt+Shift+K</code>.</li>
         <li><b>Native Diff Review:</b> Review AI-generated changes in a multi-file diff viewer. Accept stages changes (<code>git add</code>), Reject restores original content. Automatic snapshots ensure you can always recover previous versions.</li>
     </ul>

@@ -58,6 +58,15 @@ intellijPlatform {
             </ul>
         """.trimIndent()
     }
+
+    // The JetBrains Marketplace approval guidelines require every upload to be checked with the
+    // Plugin Verifier for binary compatibility. `recommended()` resolves the IDE builds that the
+    // Marketplace considers relevant, so run `./gradlew verifyPlugin` before publishing.
+    pluginVerification {
+        ides {
+            recommended()
+        }
+    }
 }
 
 tasks {

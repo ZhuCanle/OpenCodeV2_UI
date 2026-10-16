@@ -1,4 +1,4 @@
-# OpenCode V2 UI
+# OpenCode V2 UI (unofficial)
 
 [![JetBrains Plugin](https://img.shields.io/badge/JetBrains-Plugin-blue)](https://plugins.jetbrains.com)
 [![OpenCode](https://img.shields.io/badge/OpenCode-AI%20Agent-green)](https://opencode.ai)

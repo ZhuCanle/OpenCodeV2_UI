@@ -1,0 +1,7 @@
+<!-- Plugin Logo (light themes): 40x40, opencode mark inside a 36x36 area (2px padding). -->
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <g transform="translate(5.6 2) scale(1.2)" fill="#0F0F0F">
+    <path d="M18 30H6V18H18V30Z"/>
+    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+  </g>
+</svg>
