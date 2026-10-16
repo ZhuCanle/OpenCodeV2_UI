@@ -1,22 +1,28 @@
-# OpenCode JetBrains Plugin
+# OpenCode V2 UI
 
 [![JetBrains Plugin](https://img.shields.io/badge/JetBrains-Plugin-blue)](https://plugins.jetbrains.com)
 [![OpenCode](https://img.shields.io/badge/OpenCode-AI%20Agent-green)](https://opencode.ai)
 
-A JetBrains IDE plugin that integrates [OpenCode](https://opencode.ai) — the open-source AI coding agent — directly into your development workflow.
+A JetBrains IDE plugin that integrates [OpenCode V2](https://opencode.ai) — the open-source AI coding agent — directly into your development workflow.
+
+> **This is a community derivative of [OpenCode UI](https://github.com/LaiZhou/OpenCode_UI)** by LaiZhou,
+> extended with opencode **v2** support. It is published as a separate plugin (own id, own name, own
+> keyboard shortcuts) so it can be installed alongside the original. See
+> [Credits and Acknowledgements](#credits-and-acknowledgements).
 
 ## Features
 
 | Feature | Description | Shortcut (Mac) | Shortcut (Win/Linux) |
 |---------|-------------|----------------|----------------------|
-| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + Esc` | `Ctrl + \` |
-| **Add to Terminal** | Send current file/selection or selected files to OpenCode | `Opt + Cmd + K` | `Ctrl + Alt + K` |
+| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
+| **Add to Terminal** | Send current file/selection or selected files to OpenCode | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
 | **Diff Review** | View diffs and accept/reject changes in IDE | — | — |
 | **Notifications** | System alert when task completes | — | — |
 | **Auto-Resume** | Restore last session on launch | — | — |
 | **Smart Links** | Clickable file paths in terminal | — | — |
-| **Auth Support** | Optional password for OpenCode server | — | — |
+| **Auth Support** | Basic auth password (auto-discovered for local, required for remote) | — | — |
 | **Local Change Alert** | Warn when local edits differ from AI output | — | — |
+| **Web UI Mode** | Open the opencode web UI in an IDE tab (JCEF) instead of the terminal | — | — |
 
 ### Feature Comparison with Claude Code
 
@@ -29,40 +35,73 @@ A JetBrains IDE plugin that integrates [OpenCode](https://opencode.ai) — the o
 
 ### Sidebar Icon
 
-Click the **OpenCode** icon in the right sidebar to instantly focus or create an OpenCode terminal session.
+Click the **OpenCode V2** icon in the right sidebar to instantly focus or create an OpenCode terminal session.
 
 ### Context Menus
 
-- **Editor**: Right-click in editor → *OpenCode: Add Context*
-- **Project View**: Right-click on files/folders → *OpenCode: Add File(s)*
+- **Editor**: Right-click in the editor → **Add lines to OpenCode Terminal** (last item in the menu)
+- **Project View**: Right-click on files/folders → **Add to OpenCode Terminal**
+- **Tools menu**: **Tools** → **Open OpenCode** (same action as the Quick Launch shortcut)
 
 ## Requirements
 
-- **JetBrains IDE**: IntelliJ IDEA, WebStorm, PyCharm, etc. (2025.2+)
-- **OpenCode CLI**: Install via `npm install -g opencode` or see [opencode.ai/download](https://opencode.ai/download)
+- **JetBrains IDE**: IntelliJ IDEA, WebStorm, PyCharm, etc. — **2026.2** or later (the plugin is built
+  against IntelliJ Platform 2026.2, `since-build 262`)
+- **OpenCode v2 CLI**: the plugin targets opencode **v2** (verified with 2.0.x) and warns once when it
+  connects to a different major version.
+
+  - macOS / Linux: `brew install anomalyco/tap/opencode-v2`
+  - Other platforms: see [opencode.ai/download](https://opencode.ai/download)
+
+  > **Note**: v2 conflicts with v1's `opencode` formula — both install an `opencode` binary — so remove
+  > v1 first (`brew uninstall opencode`) if you have it. The npm package `opencode-ai` is the **v1**
+  > line, not v2.
 
 ## Installation
 
-**Plugin URL**: https://plugins.jetbrains.com/plugin/29744-opencode-ui
+> **Not published on the Marketplace yet.** This is a **separate plugin** (id `com.zhucanle.opencodev2.ide`),
+> distinct from the original *OpenCode UI*, so the two can be installed side by side.
 
-Open **Settings** → **Plugins** → **Marketplace** → Search "OpenCode" → **Install**
+Build it from source and install the resulting zip:
+
+```bash
+./gradlew buildPlugin
+```
+
+Then open **Settings** → **Plugins** → ⚙ → **Install Plugin from Disk…** and pick
+`build/distributions/OpenCodeV2_UI-<version>.zip`, then restart the IDE.
 
 ## Usage
 
 ### 1. Launch OpenCode Terminal
 
-Press `Cmd+Esc` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. You can:
+Press `Cmd+Shift+Esc` (Mac) or `Ctrl+Shift+\` (Win/Linux) to open the connection dialog. Two modes are supported:
 
-- **Connect to existing server**: Enter `host:port` (e.g., `127.0.0.1:58052`) and optional password to connect to OpenCode Desktop or any running OpenCode server. Authentication is detected automatically if available.
-- **Create new terminal**: Use default `127.0.0.1:4096` to create a local OpenCode terminal session. The terminal tab will be named `OpenCode(4096)`.
+- **Local (default)**: The plugin uses the opencode v2 **background service**. If the service is not
+  running it starts it (`opencode service start`), discovers its URL via `opencode service status`,
+  and reads its Basic auth password from `service.json` in the opencode config directory
+  (`~/.config/opencode/service.json`, or `%APPDATA%\opencode\service.json` on Windows). It then opens
+  a TUI terminal tab (e.g. `OpenCode(49374)`) attached to that same service. The dialog host/port are
+  ignored for local use — the service owns its port, and the password is discovered automatically.
+- **Remote / existing server**: Enter `host:port` (e.g., `10.0.0.5:4096`) and the **password** to
+  connect to a server started with `opencode serve` on another machine. opencode v2 requires HTTP
+  Basic auth (`opencode:<password>`) on every request, so the password is required; `opencode serve`
+  prints it to stdout at startup.
+- **Web interface (optional)**: tick **Use web interface** in the dialog to open the opencode web UI
+  (`/doc`) in an IDE tab backed by JCEF instead of the terminal tab. The choice is remembered along
+  with the other connection settings. Requires JCEF support in the IDE (present in all mainstream
+  JetBrains IDEs; without it the terminal tab is used).
 
 *Your last connection settings (address, mode, password) are remembered automatically.*
+
+<!-- TODO(screenshots): images/1.png .. images/6.png still show the old plugin name and the previous
+     keyboard shortcuts. Re-shoot them before publishing to the Marketplace. -->
 
 ![Step 1: Launch OpenCode](images/1.png)
 
 ### 2. Send Code Context to OpenCode
 
-In the editor or Project View, press `Opt+Cmd+K` (Mac) or `Ctrl+Alt+K` (Win/Linux).
+In the editor or Project View, press `Opt+Cmd+Shift+K` (Mac) or `Ctrl+Alt+Shift+K` (Win/Linux).
 
 - If the OpenCode terminal is not open yet, the plugin creates/focuses it automatically.
 - In the editor, it shares the **current file** even if nothing is selected.
@@ -81,7 +120,7 @@ This allows OpenCode to understand the context of your question or request.
 
 ### 3. Sidebar Button
 
-Click the OpenCode icon in the right sidebar to quickly focus or create the OpenCode terminal.
+Click the **OpenCode V2** icon in the right sidebar to quickly focus or create the opencode terminal.
 
 ![Step 4: Sidebar Button](images/4.png)
 
@@ -114,10 +153,11 @@ File paths in the terminal output (e.g., `@src/main/kotlin/Main.kt#L10-20`) are 
 
 All shortcuts are customizable via **Settings** → **Keymap** → search for "OpenCode".
 
-| Action | Mac | Windows/Linux |
-|--------|-----|---------------|
-| Open/Focus OpenCode | `Cmd + Esc` | `Ctrl + \` |
-| Add to OpenCode Terminal | `Opt + Cmd + K` | `Ctrl + Alt + K` |
+| Action (label shown in Keymap) | Mac | Windows/Linux |
+|--------------------------------|-----|---------------|
+| `Open OpenCode` (Quick Launch) | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
+| `Add lines to OpenCode Terminal` (editor) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
+| `Add to OpenCode Terminal` (Project View) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
 
 ## Terminal Management
 
@@ -131,17 +171,30 @@ The plugin uses a single terminal tab per project named **"OpenCode({port})"**.
 
 ### "opencode: command not found"
 
-Install the OpenCode CLI:
+Install the opencode **v2** CLI:
 
 ```bash
-npm install -g opencode-ai
+brew install anomalyco/tap/opencode-v2   # macOS / Linux
 ```
 
-Or download from [opencode.ai/download](https://opencode.ai/download)
+Other platforms: [opencode.ai/download](https://opencode.ai/download)
+
+### "OpenCode Version Mismatch" warning
+
+The plugin targets opencode **v2** and warns once when it connects to a different major version. Check
+which CLI is on your `PATH`:
+
+```bash
+opencode --version
+```
+
+v1 shipped as the npm package `opencode-ai` and the Homebrew formula `opencode`; v2 ships as the
+Homebrew formula `opencode-v2`. They **conflict** — both install a binary named `opencode` — so keep
+only one installed.
 
 ### Terminal not responding
 
-Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Esc` or `Ctrl+\` again to create a fresh session.
+Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Shift+Esc` or `Ctrl+Shift+\` again to create a fresh session.
 
 ### Shortcuts not working
 
@@ -149,12 +202,33 @@ Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Esc` or `Ctrl+
 2. Search for your shortcut to see if it's assigned to another action
 3. Reassign or remove conflicting shortcuts
 
+## Credits and Acknowledgements
+
+This project is a derivative work based on **[OpenCode UI](https://github.com/LaiZhou/OpenCode_UI)** by
+**LaiZhou**, licensed under the MIT License. Credit to the original author and to everyone who
+contributed to it — the full commit history is preserved in this repository:
+
+- **LaiZhou** — original project: plugin architecture, terminal/diff/notification features, docs
+- **Milos Zivkovic** — connection dialog base-path field, project-module selector
+- **Michael Bauer** — README improvements
+
+Changes made in this derivative:
+
+- opencode **v2** support (background service discovery, `/api` HTTP + SSE surface)
+- a distinct plugin id, display name, tool window id and action ids, so this plugin and the
+  original can be installed **side by side**
+- different default keyboard shortcuts (`Cmd+Shift+Esc` / `Opt+Cmd+Shift+K` on macOS)
+
+See the [commit history](https://github.com/ZhuCanle/OpenCodeV2_UI/commits/main) for the full record.
+
 ## Support
 
+- **Bugs / feature requests for this plugin**: [open an issue](https://github.com/ZhuCanle/OpenCodeV2_UI/issues)
 - [OpenCode Documentation](https://opencode.ai/docs)
-- [GitHub Issues](https://github.com/anomalyco/opencode/issues)
+- [OpenCode CLI issues](https://github.com/anomalyco/opencode/issues)
 - [Discord Community](https://opencode.ai/discord)
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details. This project retains the original copyright notice of
+"OpenCode UI" by LaiZhou, as required by the MIT License.

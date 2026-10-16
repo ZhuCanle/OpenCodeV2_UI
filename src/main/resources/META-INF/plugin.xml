@@ -1,21 +1,25 @@
 <!-- Plugin Configuration File: https://plugins.jetbrains.com/docs/intellij/plugin-configuration-file.html -->
 <idea-plugin>
-  <id>ai.opencode.ide.jetbrains</id>
-  <name>OpenCode UI</name>
-  <vendor email="hhlai1990@gmail.com" url="https://github.com/LaiZhou/OpenCode_UI">laizhou</vendor>
+  <id>com.zhucanle.opencodev2.ide</id>
+  <name>OpenCode V2 UI</name>
+  <vendor url="https://github.com/ZhuCanle/OpenCodeV2_UI">zclyde</vendor>
   
 
   <description><![CDATA[
-    <b>OpenCode UI - AI Coding Agent for JetBrains IDEs</b><br><br>
+    <b>OpenCode V2 UI - AI Coding Agent for JetBrains IDEs</b><br><br>
     
     Seamlessly integrates <a href="https://opencode.ai">OpenCode</a> directly into your workflow.<br><br>
     
     <b>Key Features:</b><br>
     <ul>
-        <li><b>Quick Launch:</b> Connect to existing OpenCode server (e.g., OpenCode Desktop) or create new terminal with <code>Cmd+Esc</code> / <code>Ctrl+\</code>. Supports automatic authentication and optional password input.</li>
-        <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+K</code> / <code>Ctrl+Alt+K</code>.</li>
+        <li><b>Quick Launch:</b> Connect to existing OpenCode server (e.g., OpenCode Desktop) or create new terminal with <code>Cmd+Shift+Esc</code> / <code>Ctrl+Shift+\</code>. Supports automatic authentication and optional password input.</li>
+        <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+Shift+K</code> / <code>Ctrl+Alt+Shift+K</code>.</li>
         <li><b>Native Diff Review:</b> Review AI-generated changes in a multi-file diff viewer. Accept stages changes (<code>git add</code>), Reject restores original content. Automatic snapshots ensure you can always recover previous versions.</li>
     </ul>
+    <b>Based on OpenCode UI:</b> This plugin is a community derivative of
+    <a href="https://github.com/LaiZhou/OpenCode_UI">OpenCode UI</a> by LaiZhou (MIT License),
+    extended with opencode v2 support. It uses its own plugin id, name and keyboard shortcuts,
+    so it can be installed alongside the original.
   ]]></description>
 
   <depends>com.intellij.modules.platform</depends>
@@ -24,60 +28,60 @@
   <depends optional="true" config-file="opencode-web-support.xml">com.intellij.modules.jcef</depends>
 
   <actions>
-    <action id="OpenCode.QuickLaunch"
-            class="ai.opencode.ide.jetbrains.QuickLaunchAction"
+    <action id="OpenCodeV2.QuickLaunch"
+            class="com.zhucanle.opencodev2.ide.QuickLaunchAction"
             text="Open OpenCode"
             description="Open or focus the OpenCode terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ToolsMenu" anchor="first"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control BACK_SLASH"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta ESCAPE"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta ESCAPE"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control shift BACK_SLASH"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift ESCAPE"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift ESCAPE"/>
     </action>
 
-    <action id="OpenCode.AddLines"
-            class="ai.opencode.ide.jetbrains.SendSelectionToTerminalAction"
+    <action id="OpenCodeV2.AddLines"
+            class="com.zhucanle.opencodev2.ide.SendSelectionToTerminalAction"
             text="Add lines to OpenCode Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control alt K"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta K"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta K"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta shift K"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta shift K"/>
     </action>
 
-    <action id="OpenCode.AddFile"
-            class="ai.opencode.ide.jetbrains.SendSelectionToTerminalAction"
+    <action id="OpenCodeV2.AddFile"
+            class="com.zhucanle.opencodev2.ide.SendSelectionToTerminalAction"
             text="Add to OpenCode Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control alt K"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta K"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta K"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta shift K"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta shift K"/>
     </action>
   </actions>
 
   <extensions defaultExtensionNs="com.intellij">
     <!-- Project-level Services -->
-    <projectService serviceImplementation="ai.opencode.ide.jetbrains.OpenCodeService"/>
-    <projectService serviceImplementation="ai.opencode.ide.jetbrains.session.SessionManager"/>
-    <projectService serviceImplementation="ai.opencode.ide.jetbrains.diff.DiffViewerService"/>
+    <projectService serviceImplementation="com.zhucanle.opencodev2.ide.OpenCodeService"/>
+    <projectService serviceImplementation="com.zhucanle.opencodev2.ide.session.SessionManager"/>
+    <projectService serviceImplementation="com.zhucanle.opencodev2.ide.diff.DiffViewerService"/>
 
     <!-- File Editor Provider -->
-    <fileEditorProvider implementation="ai.opencode.ide.jetbrains.terminal.OpenCodeTerminalFileEditorProvider"/>
-    <fileEditorProvider implementation="ai.opencode.ide.jetbrains.web.OpenCodeWebFileEditorProvider"/>
+    <fileEditorProvider implementation="com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalFileEditorProvider"/>
+    <fileEditorProvider implementation="com.zhucanle.opencodev2.ide.web.OpenCodeWebFileEditorProvider"/>
 
     <!-- Notifications -->
-    <notificationGroup id="OpenCode" displayType="BALLOON"/>
+    <notificationGroup id="OpenCodeV2" displayType="BALLOON"/>
 
-    <toolWindow id="OpenCode"
-                factoryClass="ai.opencode.ide.jetbrains.OpenCodeToolWindowFactory"
+    <toolWindow id="OpenCodeV2"
+                factoryClass="com.zhucanle.opencodev2.ide.OpenCodeToolWindowFactory"
                 icon="/icons/opencode.svg"
                 anchor="right"/>
 
   </extensions>
 
   <projectListeners>
-    <listener class="ai.opencode.ide.jetbrains.terminal.OpenCodeTerminalEditorListener"
+    <listener class="com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalEditorListener"
               topic="com.intellij.openapi.fileEditor.FileEditorManagerListener"/>
   </projectListeners>
 </idea-plugin>

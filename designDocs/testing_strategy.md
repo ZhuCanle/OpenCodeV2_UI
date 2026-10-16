@@ -37,26 +37,33 @@ Layer 1: Mock IDE + Fake Server (OpenCodeLogicTest)
 | **Scenario N: Server Authoritative** | 无 VFS 信号 + Server Diff | 验证只要有 SSE 声明，即使 VFS 没捕获到（如远程修改），Server Diff 也能显示。 |
 | **Scenario O: Create then Modify** | 连续回合创建后修改 | 验证 Pre-Filter 和 Rescue 机制能正确处理服务器返回滞后数据的情况（防止因 Before==After 而过滤真实修改）。 |
 
-### 2. 真实集成测试 (`RealProcessIntegrationTest`)
+### 2. 集成测试 (Integration Tests)
 
-**位置**: `src/test/kotlin/ai/opencode/ide/jetbrains/integration/RealProcessIntegrationTest.kt`
+**位置**: `src/test/kotlin/ai/opencode/ide/jetbrains/integration/`
 
-**目的**: 验证插件代码与**真实 OpenCode 二进制文件**的兼容性。
+分为两个类：
 
-**验证点**:
-- **连接**: 自动探测并启动 `opencode serve`，建立真实的 SSE/HTTP 连接。
-- **Accept**: 模拟 AI 修改文件后点击 "Accept"，验证文件被正确 `git add` 到暂存区。
-- **Reject**: 模拟 AI 修改文件后点击 "Reject"，验证文件内容被正确恢复。
-- **文件操作**: 覆盖 Delete, Create, Modify Empty File 等边缘情况。
+- **`RealProcessIntegrationTest`**（默认运行，**不需要** opencode CLI）
+  - **Accept**: 模拟 AI 修改文件后点击 "Accept"，验证文件被正确 `git add` 到暂存区。
+  - **Reject**: 模拟 AI 修改文件后点击 "Reject"，验证文件内容被正确恢复。
+  - **文件操作**: 覆盖 Delete, Create, Modify Empty File 等边缘情况。
+- **`RealServerIntegrationTest`**（**默认不运行**，需显式开启；见下）
+  - **目的**: 验证插件代码与**真实 OpenCode 二进制文件**的兼容性。
+  - **连接**: 自动探测并启动 `opencode serve`，校验 `/api/info` 版本为 v2、凭据探测通过并建立真实的 SSE 连接。
+
+> 之所以默认关闭：该用例依赖本机安装的 `opencode` CLI 与一个真实服务进程（环境相关）。为既不在缺少 CLI 的机器上误报失败、也不产生"假绿"，它由构建开关 `-PwithRealServer` 控制（见 `build.gradle.kts`）。
 
 ### 3. 如何运行测试
 
 ```bash
-# 运行所有测试
+# 运行所有测试（默认；环境相关的真实服务用例会被排除）
 ./gradlew test
 
 # 运行特定测试
 ./gradlew test --tests "ai.opencode.ide.jetbrains.integration.OpenCodeLogicTest"
+
+# 运行真实服务集成测试（需要本机 opencode CLI）
+./gradlew test -PwithRealServer --tests "*RealServerIntegrationTest*"
 ```
 
 ---
@@ -74,7 +81,7 @@ sequenceDiagram
     participant Snapshot
     participant DiffViewer
 
-    SSE->>SessionManager: session.status(busy)
+    SSE->>SessionManager: session.execution.started
     SessionManager->>SessionManager: onTurnStart()
     
     par Signal Separation
@@ -84,7 +91,7 @@ sequenceDiagram
         SessionManager->>SessionManager: beforeContentsChange -> capturedBeforeContent
     end
     
-    SSE->>SessionManager: session.status(idle)
+    SSE->>SessionManager: session.step.ended
     SessionManager->>Snapshot: onTurnEnd() -> Create TurnSnapshot
     Note right of Snapshot: Holds vfsChangedFiles, serverEditedFiles, capturedBeforeContent
     
@@ -136,4 +143,4 @@ sequenceDiagram
 ## 维护指南
 
 - **修改 SessionManager**: 必须运行 `OpenCodeLogicTest`。
-- **升级 OpenCode**: 必须运行 `RealProcessIntegrationTest`。
+- **升级 OpenCode**: 必须运行 `./gradlew test -PwithRealServer --tests "*RealServerIntegrationTest*"`。

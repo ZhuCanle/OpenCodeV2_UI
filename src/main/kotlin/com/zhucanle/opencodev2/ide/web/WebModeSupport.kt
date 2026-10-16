@@ -1,0 +1,113 @@
+package com.zhucanle.opencodev2.ide.web
+
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.ex.FileEditorManagerEx
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.Messages
+import com.intellij.ui.jcef.JBCefApp
+
+object WebModeSupport {
+
+    /** Host used when the server binds all interfaces; `0.0.0.0` is not navigable from a browser. */
+    private const val BIND_ALL_HOST = "0.0.0.0"
+    private const val LOOPBACK_HOST = "127.0.0.1"
+
+    /** Path where the opencode v2 server serves its web UI. */
+    private const val WEB_UI_PATH = "/doc"
+
+    fun isJcefSupported(): Boolean {
+        return try {
+            JBCefApp.isSupported()
+        } catch (e: Throwable) {
+            false
+        }
+    }
+
+    /**
+     * Builds the v2 web UI URL: `http://<host>:<port>/doc`.
+     *
+     * A bind-all host is normalized to loopback because browsers reject `0.0.0.0` as a target.
+     */
+    fun buildUrl(host: String, port: Int): String {
+        val browserHost = if (host == BIND_ALL_HOST) LOOPBACK_HOST else host
+        return "http://$browserHost:$port$WEB_UI_PATH"
+    }
+
+    /**
+     * The `scheme://host:port` origin of [url], or null when it cannot be parsed.
+     *
+     * The web UI is served from `/doc` but its SPA issues `http://host:port/api/...` XHRs, so the
+     * embedded browser must scope its auth-header injection to the whole origin, not the `/doc` URL.
+     */
+    fun originOf(url: String): String? = try {
+        val uri = java.net.URI(url)
+        val scheme = uri.scheme
+        val host = uri.host
+        if (scheme == null || host == null) {
+            null
+        } else {
+            val portPart = if (uri.port != -1) ":${uri.port}" else ""
+            "$scheme://$host$portPart"
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    /** True when [requestUrl] targets [targetOrigin] (exact origin or a path under it). */
+    fun isSameOrigin(requestUrl: String, targetOrigin: String): Boolean =
+        requestUrl == targetOrigin || requestUrl.startsWith("$targetOrigin/")
+
+    fun openWebTab(project: Project, host: String, port: Int, password: String? = null, onClose: () -> Unit): OpenCodeWebVirtualFile? {
+        if (!isJcefSupported()) {
+            Messages.showErrorDialog(project, "JCEF (Embedded Browser) is not supported in this IDE environment.", "Web Interface Error")
+            return null
+        }
+
+        // v2 serves the web UI at /doc. The URL carries no credentials:
+        // credentials are injected via JS Pre-Auth in OpenCodeWebFileEditor.
+        val url = buildUrl(host, port)
+        
+        val tabName = "OpenCode Web($port)"
+        // Pass password to VirtualFile so Editor can use it
+        val virtualFile = OpenCodeWebVirtualFile(tabName, url)
+        virtualFile.putUserData(OpenCodeWebVirtualFile.PASSWORD_KEY, password)
+
+        OpenCodeWebFileEditorProvider.registerCallback(virtualFile, onClose)
+
+        ApplicationManager.getApplication().invokeLater {
+            logger.info("Opening web tab: $url")
+            val editors = FileEditorManager.getInstance(project).openFile(virtualFile, true)
+            logger.info("FileEditorManager returned ${editors.size} editors")
+            if (editors.isEmpty()) {
+                Messages.showErrorDialog(project, "Failed to open Web Interface tab. No editor provider found.", "Error")
+            }
+            pinTab(project, virtualFile)
+        }
+        
+        return virtualFile
+    }
+
+    private val logger = com.intellij.openapi.diagnostic.Logger.getInstance(WebModeSupport::class.java)
+    
+    fun unregisterCallback(file: OpenCodeWebVirtualFile) {
+        try {
+            OpenCodeWebFileEditorProvider.unregisterCallback(file)
+        } catch (e: Throwable) {
+            // ignore
+        }
+    }
+
+    private fun pinTab(project: Project, file: com.intellij.openapi.vfs.VirtualFile) {
+         try {
+            val managerEx = FileEditorManagerEx.getInstanceEx(project)
+            managerEx.currentWindow?.let { window ->
+                if (!window.isFilePinned(file)) {
+                    window.setFilePinned(file, true)
+                }
+            }
+        } catch (e: Exception) {
+            // ignore
+        }
+    }
+}

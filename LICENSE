@@ -1,6 +1,11 @@
 MIT License
 
-Copyright (c) 2026 [LaiZhou]
+Copyright (c) 2026 LaiZhou <hhlai1990@gmail.com>   (original "OpenCode UI")
+Copyright (c) 2026 zclyde <z_clyde@foxmail.com>  (OpenCode V2 UI)
+
+This software is a derivative work based on "OpenCode UI"
+(https://github.com/LaiZhou/OpenCode_UI), distributed under the MIT License.
+The original copyright notice above is retained as required by the license.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

@@ -1,109 +1,114 @@
-## OpenCode Server API 学习笔记
+## OpenCode Server API 学习笔记（v2）
 
+> 本插件已 **v2-only**。本文档记录 opencode v2 的 `/api` 接口面、认证方式与服务发现流程。
+>
 > 参考来源：
 > - 官方文档：https://opencode.ai/docs/server/
-> - JS SDK：`sdk/js/src/gen/types.gen.ts`、`sdk/js/src/gen/sdk.gen.ts`
+> - 本机验证：opencode v2.0.29（`opencode serve` / `opencode service status`）
 
 ---
 
 ## 总览
 
-- Server 提供 OpenAPI 3.1（`/doc`），同时生成 JS SDK。
-- SSE 事件可通过 `/event?directory=` 订阅，或者 `/global/event` 获取全局事件。
-- 会话相关 API 位于 `/session`，其中 `messageID` 是 diff 与 session 操作的重要关联点。
+- opencode v2 的 HTTP API 全部位于 **`/api`** 前缀下（v1 的 `/session`、`/global/*` 顶层路径已废弃）。
+- **每个 `/api/*` 路由都需要 HTTP Basic 认证**（用户名固定 `opencode`，密码为服务生成）。缺失认证返回 `401`。
+- 除 `/api/info` 外，响应统一包裹在 `{data: ...}` 信封中；`/api/info` 直接返回裸对象。
+- SSE 事件通过 `GET /api/event?directory=` 订阅；v1 的 `/global/event` 已不再使用。
 
 ---
 
-## Sessions API（核心）
+## 认证与凭据
 
-### 会话列表与状态
+| 场景 | 端口来源 | 密码来源 |
+|---|---|---|
+| 本地（后台服务） | `opencode service status` 打印的 `http://host:port` | 配置目录下 `service.json` 的 `password` 字段 |
+| 远程（`opencode serve`） | 用户在连接对话框填写 `host:port` | 用户在对话框填写，取自 `opencode serve` 启动时 stdout 打印 |
 
-- `GET /session?directory=`
-  - 返回 `Session[]`，包含 `time.updated`，用于找到最近会话。
-- `GET /session/status?directory=`
-  - 返回 `{ [sessionID]: SessionStatus }`，用于识别 Busy/Idle。
-- `GET /session/:id?directory=`
-  - 获取单个会话详情。
+- 插件**不再**从进程环境变量（`OPENCODE_SERVER_PASSWORD`）抓取凭据；v2 已移除该机制。
+- Basic auth 头形如 `Authorization: Basic b3BlbmNvZGU6PHBhc3N3b3JkPg==`（`opencode:<password>`）。
 
-### Diff
+## 服务发现（本地）
 
-- `GET /session/:id/diff?directory=&messageID?`
-  - `messageID` **可选但重要**，用于定位某次消息产生的 diff。
-  - 未传 `messageID` 时，可能返回该 session 的历史 diff（导致误报）。
-
-### 其他关键 Session 操作
-
-- `POST /session`：创建会话
-- `PATCH /session/:id`：更新 title
-- `DELETE /session/:id`：删除会话
-- `POST /session/:id/abort`：中断会话
-- `POST /session/:id/revert`、`POST /session/:id/unrevert`
-- `POST /session/:id/permissions/:permissionID`
+- `opencode service status`：服务已运行时打印其 URL，例如 `http://127.0.0.1:49374`。
+- `opencode service start`：服务未运行时启动它；重复调用返回 "already running"。
+- 密码文件位置（`OpenCodeServiceDiscovery.defaultConfigDir()`）：
+  - macOS/Linux：`$XDG_CONFIG_HOME/opencode`，默认 `~/.config/opencode`
+  - Windows：`%APPDATA%\opencode`
+  - 文件名为 `service.json`，内容形如 `{"password": "..."}`（文件权限 600）。
+- 插件从不停止全局共享的后台服务；断开连接时只释放自己的 API/SSE 客户端。
 
 ---
 
-## Messages / Commands API（与 messageID 关联）
+## 核心端点
 
-- `POST /session/:id/command`
-  - 执行 `/mystatus` 等命令，返回 Message（含 `id`）。
-- `GET /session/:id/message?limit?`
-  - 返回 `{ info: Message, parts: Part[] }[]`
-- `POST /session/:id/message`
-  - 返回 `{ info: Message, parts: Part[] }`
+### 健康 / 版本
 
-**Message 结构要点（SDK）**
-- `Message.id` = `messageID`
-- `Message.sessionID` 关联 session
-- `Message.role` = `user` 或 `assistant`
+- `GET /api/info`
+  - 裸对象（无 `{data}` 信封）：`{version, pid, urls, paths, capabilities}`。
+  - `version` 用于连接时的版本门禁（非 v2 主版本时告警但仍可继续）。
 
----
+### 会话
 
-## SSE 事件（SDK 对照）
+- `GET /api/session?directory=` → `{data:[Session.Info]}`，按 `time.updated` 找最近会话。
+- `GET /api/session/active?directory=` → `{data:{}}`（无活动会话）或 `{data:Session.Info}`。
+- `GET /api/session/{id}?directory=` → 单个会话详情。
+- `POST /api/session`、`PATCH /api/session/{id}`、`DELETE /api/session/{id}`、`POST /api/session/{id}/abort` 等会话管理接口。
 
-### 事件订阅
+### 消息 / 命令 / 提示
 
-- `/event?directory=`（对应 SDK `EventSubscribeData`）
-- `/global/event`（SDK Global event）
+- `GET /api/session/{id}/message?limit=&cursor=` → `{data:[Message]}`（Message 含 `id`、`sessionID`、`role`）。
+- `POST /api/session/{id}/prompt`（`PromptInput.*`）：**会提交一轮对话**，因此不用于「预填输入框」。
+- `POST /api/session/{id}/command`：执行 `/mystatus` 等命令并返回 Message。
 
-### 本插件关注的事件
+### Diff（v2 关键变化）
 
-- `session.status` → `{ sessionID, status }`
-- `session.idle` → `{ sessionID }`
-- `session.diff` → `{ sessionID, diff: FileDiff[] }`
-- `file.edited` → `{ file }`
-- `message.updated` → `{ info: Message }`（Message 中带 `id`, `sessionID`, `role`）
-- `command.executed` → `{ name, sessionID, arguments, messageID }`
+- `GET /api/session/{id}/diff?directory=&from=&to=&context=` → `{data:[FileDiff.Info]}`。
+  - `from` / `to` 是 **message id**（`Session.Message.ID`），必须传 **user** message id；传错类型服务端返回 `400`。
+  - 省略 `from` 时默认取「最新 user 消息所在的一轮」。
+- `FileDiff.Info`：`{file, patch, additions, deletions, status}`，其中 `patch` 是统一 diff 文本。
+  - v1 的 `{file, before, after, ...}`（整份前后内容）已被移除；插件改为用 `patch` + 本地 git 快照重建 diff 展示。
 
-**SDK 定义对照**
-- `EventMessageUpdated.properties.info`（不是 `messageID`）
-- `EventCommandExecuted.properties.name/arguments/messageID`（不是 `command` 字段）
+### TUI
+
+- `POST /tui/append-prompt` 在 v2 **已移除**（返回 `405`）。
+  - 替代方案：把 `@path#Lx-y` 文本直接写入 OpenCode 终端（TTY），由 TUI 当作键入的输入处理。
 
 ---
 
-## 重要结论 / 使用建议
+## SSE 事件（`GET /api/event?directory=`）
 
-1. **获取 diff 必须尽量携带 `messageID`**
-   - 缺失时会返回历史 diff（已删除文件也会被当成“新变化”）。
-2. **`message.updated` 事件必须解析 `info.id` 作为 messageID**
-   - SDK 明确该字段在 `info` 中，而不是直接在 `properties`。
-3. **`command.executed` 事件提供可靠的 messageID**
-   - 对 `/mystatus` 等命令场景尤为重要。
-4. **`message.part.updated` 可作为兜底来源**
-   - Part 对象包含 `sessionID` 和 `messageID`，可在 `message.updated` 缺失时补齐。
-5. **会话进入 `busy` 时应幂等清理状态**
-   - 仅在 `status.isBusy() && changed` 为真时清理 `turnMessageIds` 等状态，防止重发的 busy 信号抹掉中途到达的 `file.edited` 事件。
-6. **Fetch 优先级策略**
-   - 1. `messageID` 关联的 API 结果 (最准)；2. SSE 推送的 `session.diff` (兜底)；3. `Session Summary` (最后手段)。
+- 帧格式：`data: <裸 JSON 对象>`（没有 `event:` 行，载荷不再二次编码）；`: heartbeat` 等注释行忽略。
+- 事件信封除业务字段外，还可能带 `durable: {aggregateID, seq, version}` 等簿记字段（可忽略）。
+
+### 本插件关注的 v2 事件
+
+插件 v2-only，仅解码以下事件，其余一律归为 `UnknownEvent` 忽略：
+
+- `session.execution.started` → `{sessionID}`：一轮对话开始（真正的 v2 "busy" 信号）。
+- `session.execution.succeeded | failed | interrupted` → `{sessionID}`：一轮对话结束；`failed` 另带 `error.message`。
+- `session.step.ended` → `{sessionID, assistantMessageID?, files:[], snapshot?}`：单步结束，携带该步内变更的文件列表（取代 v1 的 `session.diff`）。
+
+> v1 事件名（`session.status`、`session.idle`、`session.diff`、`session.updated`、`message.updated`、
+> `message.part.*`、`command.executed`、`file.edited`）的载荷位于 `properties` 字段下，v2 线路上从未观测到；
+> 插件是 v2-only，不再解码这些事件。
+
+### 其他 v2 事件（当前忽略）
+
+- `session.created | updated | deleted`、`session.error`、`session.compacted`。
+- `message.updated`、`message.part.updated | removed | delta`、`command.executed`。
+- `vcs.branch.updated`、`worktree.ready | failed`、`mcp.*`、`permission.*`、`filesystem.changed`、
+  `server.connected`、`global.disposed`、`tui.*`。
 
 ---
 
-## 本插件当前 API 使用点（复核）
+## 本插件当前 API/事件使用点
 
-- `/event?directory=`：SSE 事件订阅
-- `/global/health`：健康检查
-- `/session/status`：寻找 busy session
-- `/session`：获取最新 session
-- `/session/:id`：获取 session summary（diff fallback）
-- `/session/:id/diff?messageID?`：展示 diff
-- `/tui/append-prompt`：向 TUI 追加命令
+- `GET /api/info`：健康检查与版本门禁
+- `GET /api/session?directory=`：连接时的凭据探测（`checkAuth`）；`/api/info` 是匿名的，无法验证密码
+- `GET /api/session/{id}/diff?directory=`：获取一轮 diff（**省略 `from`**，默认为最新一轮 user 消息）
+- `GET /api/event?directory=`：SSE 事件订阅
+- 订阅事件（仅此三类，其余忽略）：`session.execution.*`、`session.step.ended`
+- `@`-引用写入终端 TTY（不再使用 `/tui/append-prompt`）
 
+> 说明：`OpenCodeApiClient` 还定义了 `getSessions` / `getActiveSession` / `getSession`，但插件主流程不使用
+> `/api/session/active` 与 `/api/session/{id}`；会话列表经 `GET /api/session` 仅用于凭据探测。

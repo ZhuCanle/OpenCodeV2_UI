@@ -1,6 +1,6 @@
-# OpenCode IntelliJ Plugin - Developer Guide for Agents
+# OpenCode V2 UI - Developer Guide for Agents
 
-This repository contains the source code for the OpenCode IntelliJ Platform plugin.
+This repository contains the source code for the OpenCode V2 UI JetBrains plugin.
 This document provides strict guidelines and useful context for AI agents (and human developers) working on this codebase.
 
 ## 1. Project Overview
@@ -41,11 +41,11 @@ This document provides strict guidelines and useful context for AI agents (and h
   ```
 - **Run Single Test Class** (Preferred for targeted validation):
   ```bash
-  ./gradlew test --tests "ai.opencode.ide.jetbrains.util.PortFinderTest"
+  ./gradlew test --tests "com.zhucanle.opencodev2.ide.util.PortFinderTest"
   ```
 - **Run Single Test Method** (Precision testing):
   ```bash
-  ./gradlew test --tests "ai.opencode.ide.jetbrains.util.PortFinderTest.testPortAvailability"
+  ./gradlew test --tests "com.zhucanle.opencodev2.ide.util.PortFinderTest.testPortAvailability"
   ```
 - **Run Tests Matching Pattern**:
   ```bash
@@ -68,7 +68,7 @@ Strictly adhere to the [Kotlin Coding Conventions](https://kotlinlang.org/docs/c
 - **Classes**: `PascalCase` (e.g., `OpenCodeService`, `DiffViewerService`).
 - **Functions/Properties**: `camelCase` (e.g., `findAvailablePort`, `activeSessionId`).
 - **Constants**: `UPPER_SNAKE_CASE` inside `companion object`.
-- **Packages**: `lowercase`, separated by dots (e.g., `ai.opencode.ide.jetbrains.util`).
+- **Packages**: `lowercase`, separated by dots (e.g., `com.zhucanle.opencodev2.ide.util`).
 
 ### Imports
 - **No Wildcards**: Avoid `import com.foo.*` unless importing >5 classes from the same package.
@@ -95,10 +95,10 @@ Strictly adhere to the [Kotlin Coding Conventions](https://kotlinlang.org/docs/c
 
 ## 4. Architecture & Patterns
 
-The codebase follows a modular structure within the main package `ai.opencode.ide.jetbrains`:
+The codebase follows a modular structure within the main package `com.zhucanle.opencodev2.ide`:
 
 ```
-src/main/kotlin/ai/opencode/ide/jetbrains/
+src/main/kotlin/com/zhucanle/opencodev2/ide/
 ├── OpenCodeService.kt          # CORE: Main project service, manages connection & lifecycle
 ├── OpenCodeToolWindow.kt       # UI: Entry point for the ToolWindow
 ├── QuickLaunchAction.kt        # Action: Cmd+Esc handler
@@ -119,7 +119,7 @@ src/main/kotlin/ai/opencode/ide/jetbrains/
 │   └── OpenCodeConnectDialog.kt
 └── util/                       # UTILS: Helpers
     ├── PortFinder.kt           # Localhost port management
-    └── ProcessAuthDetector.kt  # Auth token discovery
+    └── ServerAuth.kt            # HTTP Basic credentials for an opencode server
 ```
 
 ### Key Architectural Concepts
@@ -141,7 +141,7 @@ src/main/kotlin/ai/opencode/ide/jetbrains/
 
 ### Common Pitfalls
 - **VirtualFiles vs. IoFiles**: IntelliJ uses `VirtualFile`. Use `LocalFileSystem.getInstance().findFileByIoFile()` to convert.
-- **Paths (Cross-Platform)**: Always normalize/resolve paths via `ai.opencode.ide.jetbrains.util.PathUtil`. Avoid hardcoded separators or manual `substring` logic. Ensure Windows/macOS/Linux compatibility.
+- **Paths (Cross-Platform)**: Always normalize/resolve paths via `com.zhucanle.opencodev2.ide.util.PathUtil`. Avoid hardcoded separators or manual `substring` logic. Ensure Windows/macOS/Linux compatibility.
 - **Read/Write Actions**: Modifying the PSI or VFS requires a Write Action (`runWriteAction`). Reading requires a Read Action.
 - **SDK Compatibility**: Ensure APIs used are available in the target version (see `build.gradle.kts`).
 

@@ -1,11 +1,11 @@
 plugins {
     id("java")
-    id("org.jetbrains.kotlin.jvm") version "2.1.20"
-    id("org.jetbrains.intellij.platform") version "2.10.2"
+    id("org.jetbrains.kotlin.jvm") version "2.4.21"
+    id("org.jetbrains.intellij.platform") version "2.19.0"
 }
 
 group = "ai.opencode"
-version = "1.1.0"
+version = "1.2.0"
 
 repositories {
     mavenCentral()
@@ -17,12 +17,21 @@ repositories {
 // Read more: https://plugins.jetbrains.com/docs/intellij/tools-intellij-platform-gradle-plugin.html
 dependencies {
     intellijPlatform {
-        intellijIdea("2025.2.4")
+        // NOTE: IntelliJ IDEA Community is no longer published as a separate artifact since 2025.3;
+        // the single "IntelliJ IDEA" distribution is the only option and it bundles the ultimate plugin.
+        intellijIdea("2026.2.2")
         testFramework(org.jetbrains.intellij.platform.gradle.TestFrameworkType.Platform)
 
         // Terminal API
         bundledPlugin("org.jetbrains.plugins.terminal")
 
+        // JCEF: bundled in the product up to 2025.x, but split into its own bundled plugin on 2026.2
+        bundledPlugin("com.intellij.modules.jcef")
+
+        // The single 2026.2 "IntelliJ IDEA" distribution bundles the ultimate plugin, but its module
+        // does not reach the test runtime classpath by default. Without it, opening the fixture
+        // project trips over an ultimate extension (B.B.B.B.s) that cannot be instantiated.
+        testBundledModule("com.intellij.modules.ultimate")
     }
 
     // HTTP client and JSON
@@ -36,25 +45,33 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "242"
+            sinceBuild = "262"
             // No untilBuild - compatible with all future versions
         }
 
         changeNotes = """
-            <h2>1.1.0</h2>
+            <h2>1.2.0</h2>
             <ul>
-                <li>New: Custom base path support — added a "Custom base path" dropdown in the connection dialog, allowing users to specify a working directory for OpenCode terminal sessions. Automatically populated with detected project modules.</li>
-                <li>Fix: Fixed the OpenCode CLI install command in README to match official download instructions.</li>
+                <li>New: opencode v2 support. The plugin now drives the v2 background service: local sessions attach to the service started by the CLI (discovered via `opencode service status` and authenticated with the password from `service.json`), and remote sessions connect with host:port plus the Basic auth password printed by `opencode serve`.</li>
+                <li>Change: the password is required for remote servers, while local connections discover it automatically from the running service; the local port field is ignored because the service owns its own port.</li>
+                <li>Fix: session discovery, status, diff review, completion notifications and @-reference injection now use the v2 `/api` HTTP and SSE surface.</li>
             </ul>
         """.trimIndent()
     }
 }
 
 tasks {
-    // Set the JVM compatibility versions
-    withType<JavaCompile> {
-        sourceCompatibility = "17"
-        targetCompatibility = "17"
+    // NOTE: Java/Kotlin JVM targets are intentionally NOT set here. The IntelliJ Platform Gradle
+    // plugin pins the toolchain to the JVM required by the target IDE (JBR 25 for 2026.2), and
+    // overrides any hand-written target, which used to leave compileJava (17) and compileKotlin
+    // (25) inconsistent. Letting the plugin own it keeps both tasks aligned.
+
+    // Ship the license text inside the plugin artifact. The MIT License requires the copyright
+    // notice and the license text to accompany every distributed copy of the software.
+    named<org.gradle.language.jvm.tasks.ProcessResources>("processResources") {
+        from(rootProject.layout.projectDirectory.file("LICENSE")) {
+            into("META-INF")
+        }
     }
 
     withType<org.jetbrains.intellij.platform.gradle.tasks.RunIdeTask> {
@@ -65,10 +82,20 @@ tasks {
     named("buildSearchableOptions") {
         enabled = false
     }
-}
 
-kotlin {
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    // RealServerIntegrationTest needs the opencode CLI and a live server (env-dependent), so it is
+    // excluded unless explicitly opted in with `-PwithRealServer`.
+    withType<org.gradle.api.tasks.testing.Test> {
+        // Be explicit about what counts as a test class: the test source set also holds helpers and
+        // fixtures whose names trip Gradle's default detection (TestRunner, TestSessionManager,
+        // FakeOpenCodeServer, the V2WireFixtureTest file facade, ...), and running them as JUnit
+        // classes fails with InvalidTestClassError.
+        include("**/*Test.class", "**/*Test")
+
+        if (!project.hasProperty("withRealServer")) {
+            exclude("**/RealServerIntegrationTest.class")
+        }
     }
 }
+
+// The JVM target is owned by the IntelliJ Platform Gradle plugin (see the note in `tasks {}`).

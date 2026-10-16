@@ -1,5 +1,5 @@
 <idea-plugin>
     <extensions defaultExtensionNs="com.intellij">
-        <fileEditorProvider implementation="ai.opencode.ide.jetbrains.web.OpenCodeWebFileEditorProvider"/>
+        <fileEditorProvider implementation="com.zhucanle.opencodev2.ide.web.OpenCodeWebFileEditorProvider"/>
     </extensions>
 </idea-plugin>

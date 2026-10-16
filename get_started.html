@@ -1,20 +1,25 @@
-<h1>OpenCode UI</h1>
+<h1>OpenCode V2 UI</h1>
 
 <p>
-  <b>OpenCode UI</b> is an open-source AI coding agent integration that brings the power of <a href="https://opencode.ai">opencode.ai</a> directly into your JetBrains IDE development workflow.
+  <b>OpenCode V2 UI</b> is an open-source AI coding agent integration that brings the power of <a href="https://opencode.ai">opencode.ai</a> directly into your JetBrains IDE development workflow.
 </p>
 
 <p>
-  <b>Download:</b> <a href="https://github.com/LaiZhou/OpenCode_UI/releases/tag/1.0.9">Get the latest version (1.0.9)</a>
+  It is a community derivative of <a href="https://github.com/LaiZhou/OpenCode_UI"><b>OpenCode UI</b></a> by LaiZhou (MIT License), extended with opencode <b>v2</b> support. It uses its own plugin id and keyboard shortcuts, so it can be installed alongside the original.
+</p>
+
+<p>
+  <b>Download:</b> <a href="https://github.com/ZhuCanle/OpenCodeV2_UI/releases">Get the latest release</a>
 </p>
 
 <h2>Key Features</h2>
 <ul>
-  <li><b>Quick Launch:</b> Connect to existing OpenCode server (e.g., OpenCode Desktop) or create new terminal with a single shortcut (Cmd+Esc / Ctrl+\). Supports automatic authentication and optional password input. Connection settings are remembered automatically.</li>
-  <li><b>Context Sharing:</b> Seamlessly send code selections or file references (with line numbers) from your editor or project view directly to the AI agent (Opt+Cmd+K).</li>
+  <li><b>Quick Launch:</b> Attach to the local <b>opencode v2 background service</b> (discovered and authenticated automatically) or connect to a remote <code>opencode serve</code> instance, with a single shortcut (Cmd+Shift+Esc / Ctrl+Shift+\). Connection settings are remembered automatically.</li>
+  <li><b>Context Sharing:</b> Seamlessly send code selections or file references (with line numbers) from your editor or project view directly to the AI agent (Opt+Cmd+Shift+K).</li>
   <li><b>Diff Review:</b> Automatically review AI-generated code changes in chronological order. Title shows progress (e.g., "1 of 5"). Accept writes and stages changes; Reject restores the baseline. Both actions auto-advance to the next file.</li>
   <li><b>Notifications:</b> Get system-level alerts when AI tasks complete, so you can focus on other work while OpenCode runs.</li>
   <li><b>Auto-Resume:</b> New terminals automatically restore your last session context - pick up right where you left off.</li>
+  <li><b>Web UI Mode:</b> Tick "Use web interface" in the connection dialog to open the opencode web UI in an IDE tab (JCEF) instead of the terminal.</li>
   <li><b>Smart Links:</b> Click file paths in the terminal (e.g., <code>@src/main.kt#L10-20</code>) to jump directly to the code.</li>
 </ul>
 
@@ -25,21 +30,22 @@
 
 <br>
 
-<p>Follow these steps to set up and start using the OpenCode plugin:</p>
+<p>Follow these steps to set up and start using the OpenCode V2 UI plugin:</p>
 <ol>
-  <li>Install a <b>compatible JetBrains IDE</b> (version 2025.2 or later).</li>
-  <li><b>Install the OpenCode CLI:</b> This plugin acts as a bridge to the CLI tool. Ensure you have it installed:
-    <br><code>npm install -g opencode</code>
+  <li>Install a <b>compatible JetBrains IDE</b> (version <b>2026.2</b> or later).</li>
+  <li><b>Install the opencode v2 CLI:</b> This plugin acts as a bridge to the CLI tool and targets opencode <b>v2</b>:
+    <br><code>brew install anomalyco/tap/opencode-v2</code> (macOS / Linux) &middot; other platforms: <a href="https://opencode.ai/download">opencode.ai/download</a>
+    <br><i>Note:</i> v1 (<code>opencode-ai</code> on npm, or the <code>opencode</code> Homebrew formula) conflicts with v2 &mdash; both install an <code>opencode</code> binary &mdash; so keep only one installed.
   </li>
   <li><b>Ensure Git is installed:</b> The plugin uses local git commands for managing changes.</li>
   <li>Launch your IDE and ensure the plugin is enabled.</li>
-  <li>Press <code>Cmd + Esc</code> (Mac) or <code>Ctrl + \</code> (Windows/Linux) to launch your first session.</li>
+  <li>Press <code>Cmd + Shift + Esc</code> (Mac) or <code>Ctrl + Shift + \</code> (Windows/Linux) to launch your first session.</li>
 </ol>
 
 <h2>Usage and Shortcuts</h2>
 <ul>
-  <li><b>Connect/Launch:</b> <code>Cmd + Esc</code> (Mac) / <code>Ctrl + \</code> (Win/Linux) - Opens connection dialog to connect to existing server or create new terminal.</li>
-  <li><b>Add Context:</b> <code>Opt + Cmd + K</code> (Mac) / <code>Ctrl + Alt + K</code> (Win/Linux) - Sends file references/selection to the terminal.</li>
+  <li><b>Connect/Launch:</b> <code>Cmd + Shift + Esc</code> (Mac) / <code>Ctrl + Shift + \</code> (Win/Linux) - Opens the connection dialog: attach to the local background service or connect to a remote server.</li>
+  <li><b>Add Context:</b> <code>Opt + Cmd + Shift + K</code> (Mac) / <code>Ctrl + Alt + Shift + K</code> (Win/Linux) - Sends file references/selection to the terminal.</li>
 </ul>
 
 <h2>Diff Viewer Guide</h2>
