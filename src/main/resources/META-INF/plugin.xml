@@ -12,8 +12,8 @@
     
     <b>Key Features:</b><br>
     <ul>
-        <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+Shift+Esc</code> / <code>Ctrl+Shift+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
-        <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+Shift+K</code> / <code>Ctrl+Alt+Shift+K</code>.</li>
+        <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+Esc</code> / <code>Ctrl+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
+        <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+K</code> / <code>Ctrl+Alt+K</code>.</li>
         <li><b>Native Diff Review:</b> Review AI-generated changes in a multi-file diff viewer. Accept stages changes (<code>git add</code>), Reject restores original content. Automatic snapshots ensure you can always recover previous versions.</li>
     </ul>
     <b>Based on OpenCode UI:</b> This plugin is a community derivative of
@@ -34,9 +34,9 @@
             description="Open or focus the OpenCode V2 terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ToolsMenu" anchor="first"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control shift BACK_SLASH"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta shift ESCAPE"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta shift ESCAPE"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control BACK_SLASH"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta ESCAPE"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta ESCAPE"/>
     </action>
 
     <action id="OpenCodeV2.AddLines"
@@ -44,9 +44,9 @@
             text="Add lines to OpenCode V2 Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta shift K"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta shift K"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control alt K"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta K"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta K"/>
     </action>
 
     <action id="OpenCodeV2.AddFile"
@@ -54,9 +54,9 @@
             text="Add to OpenCode V2 Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-      <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta shift K"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta shift K"/>
+      <keyboard-shortcut keymap="$default" first-keystroke="control alt K"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="alt meta K"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="alt meta K"/>
     </action>
   </actions>
 

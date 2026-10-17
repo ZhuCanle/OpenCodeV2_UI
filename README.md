@@ -16,8 +16,8 @@ A JetBrains IDE plugin that integrates [OpenCode V2](https://opencode.ai) — th
 
 | Feature | Description | Shortcut (Mac) | Shortcut (Win/Linux) |
 |---------|-------------|----------------|----------------------|
-| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
-| **Add to Terminal** | Send current file/selection or selected files to OpenCode | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
+| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + Esc` | `Ctrl + \` |
+| **Add to Terminal** | Send current file/selection or selected files to OpenCode | `Opt + Cmd + K` | `Ctrl + Alt + K` |
 | **Diff Review** | View diffs and accept/reject changes in IDE | — | — |
 | **Notifications** | System alert when task completes | — | — |
 | **Auto-Resume** | Restore last session on launch | — | — |
@@ -77,7 +77,7 @@ Then open **Settings** → **Plugins** → ⚙ → **Install Plugin from Disk…
 
 ### 1. Launch OpenCode Terminal
 
-Press `Cmd+Shift+Esc` (Mac) or `Ctrl+Shift+\` (Win/Linux) to open the connection dialog. Two modes are supported:
+Press `Cmd+Esc` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two modes are supported:
 
 - **Local (default)**: The plugin uses the opencode v2 **background service**. If the service is not
   running it starts it (`opencode service start`), discovers its URL via `opencode service status`,
@@ -100,7 +100,7 @@ Press `Cmd+Shift+Esc` (Mac) or `Ctrl+Shift+\` (Win/Linux) to open the connection
 
 ### 2. Send Code Context to OpenCode
 
-In the editor or Project View, press `Opt+Cmd+Shift+K` (Mac) or `Ctrl+Alt+Shift+K` (Win/Linux).
+In the editor or Project View, press `Opt+Cmd+K` (Mac) or `Ctrl+Alt+K` (Win/Linux).
 
 - If the OpenCode terminal is not open yet, the plugin creates/focuses it automatically.
 - In the editor, it shares the **current file** even if nothing is selected.
@@ -153,9 +153,9 @@ All shortcuts are customizable via **Settings** → **Keymap** → search for "O
 
 | Action (label shown in Keymap) | Mac | Windows/Linux |
 |--------------------------------|-----|---------------|
-| `Open OpenCode V2` (Quick Launch) | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
-| `Add lines to OpenCode V2 Terminal` (editor) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
-| `Add to OpenCode V2 Terminal` (Project View) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
+| `Open OpenCode V2` (Quick Launch) | `Cmd + Esc` | `Ctrl + \` |
+| `Add lines to OpenCode V2 Terminal` (editor) | `Opt + Cmd + K` | `Ctrl + Alt + K` |
+| `Add to OpenCode V2 Terminal` (Project View) | `Opt + Cmd + K` | `Ctrl + Alt + K` |
 
 ## Terminal Management
 
@@ -192,7 +192,7 @@ only one installed.
 
 ### Terminal not responding
 
-Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Shift+Esc` or `Ctrl+Shift+\` again to create a fresh session.
+Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Esc` or `Ctrl+\` again to create a fresh session.
 
 ### Shortcuts not working
 
@@ -215,7 +215,8 @@ Changes made in this derivative:
 - opencode **v2** support (background service discovery, `/api` HTTP + SSE surface)
 - a distinct plugin id, display name, tool window id and action ids, so this plugin and the
   original can be installed **side by side**
-- different default keyboard shortcuts (`Cmd+Shift+Esc` / `Opt+Cmd+Shift+K` on macOS)
+- the same default keyboard shortcuts as the original (`Cmd+Esc` / `Opt+Cmd+K` on macOS).
+  If you install both plugins, rebind one of them in **Settings → Keymap**
 
 See the [commit history](https://github.com/ZhuCanle/OpenCodeV2_UI/commits/main) for the full record.
 
