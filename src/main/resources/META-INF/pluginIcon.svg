@@ -1,7 +1,15 @@
-<!-- Plugin Logo (light themes): 40x40, opencode mark inside a 36x36 area (2px padding). -->
+<!-- Plugin Logo (light themes): 40x40. opencode mark + "v2" lockup inside a 36x36 area (2px padding). -->
 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <g transform="translate(5.6 2) scale(1.2)" fill="#0F0F0F">
+  <!-- opencode mark, 22.8x28.5 -->
+  <g transform="translate(2 5.75) scale(0.95) translate(0 -6)" fill="#0F0F0F">
     <path d="M18 30H6V18H18V30Z"/>
     <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+  </g>
+  <!-- "v" -->
+  <g transform="translate(25.8 26.71) scale(0.82)" fill="none" stroke="#0F0F0F" stroke-width="1.9"
+     stroke-linecap="butt" stroke-linejoin="miter">
+    <path d="M0.95 0.95 L3.6 8.25 L6.25 0.95"/>
+    <!-- "2" -->
+    <path d="M8.6 1.0 H13.9 V4.6 H8.6 V8.2 H13.9"/>
   </g>
 </svg>
