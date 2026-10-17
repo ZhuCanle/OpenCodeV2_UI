@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.2.1"
+version = "1.2.2"
 
 repositories {
     mavenCentral()
@@ -50,10 +50,13 @@ intellijPlatform {
         }
 
         changeNotes = """
-            <h2>1.2.1</h2>
+            <h2>1.2.2</h2>
             <ul>
-                <li>New: the plugin logo and the tool window icon now carry a "v2" mark, so the plugin is easy to tell apart from the upstream OpenCode UI plugin.</li>
-                <li>Fix: the tool window / action icons were invisible in light themes; they now follow the IDE theme (dark ink on light themes, white ink on dark themes).</li>
+                <li>New: the plugin logo and the tool window / action icons carry a "v2" mark, so the plugin is easy to tell apart from the upstream OpenCode UI plugin.</li>
+                <li>New: the context menu entries now read "Open OpenCode V2" and "Add to OpenCode V2 Terminal".</li>
+                <li>Change: the default keyboard shortcuts are back to the ones the original plugin shipped with - Cmd+Esc / Ctrl+\ for quick launch and Opt+Cmd+K / Ctrl+Alt+K for sending context.</li>
+                <li>Fix: the tool window / action icons were invisible in light themes; they now follow the IDE theme (dark ink on light themes, light ink on dark themes).</li>
+                <li>Fix: the tool window icon uses the full 16x16 box, so the mark and the "v2" stay readable on HiDPI screens.</li>
             </ul>
             <h2>1.2.0</h2>
             <ul>
