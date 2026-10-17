@@ -6,19 +6,23 @@ This document provides strict guidelines and useful context for AI agents (and h
 ## 1. Project Overview
 
 - **Type**: IntelliJ Platform Plugin
-- **Language**: Kotlin (JDK 17)
+- **Language**: Kotlin (JVM target 21)
 - **Build System**: Gradle (Kotlin DSL)
 - **Target Platform**: IntelliJ IDEA 2024.2+ (Since Build 242)
-- **Version**: 1.0.4+ (See `build.gradle.kts`)
+- **Version**: 1.3.0+ (See `build.gradle.kts`)
 
 ### Core Dependencies
-- **IntelliJ Platform SDK**: 2025.2.4
+- **IntelliJ Platform SDK**: 2024.2.6 (the oldest supported IDE; the build compiles against it so
+  the bytecode stays on JVM 21, and newer IDEs are checked with `./gradlew verifyPlugin`)
 - **OkHttp**: 4.12.0 (Networking, SSE)
 - **Gson**: 2.11.0 (JSON Serialization)
 
 ## 2. Build and Verification Commands
 
 **CRITICAL**: Always use the provided Gradle wrapper (`./gradlew`) in the root directory.
+
+The build needs a JDK 21 toolchain. It is provisioned automatically (Gradle toolchain +
+foojay resolver in `settings.gradle.kts`), so `JAVA_HOME` does not have to point at one.
 
 ### Build & Run
 - **Build Project** (Compiles sources):

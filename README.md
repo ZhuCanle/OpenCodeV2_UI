@@ -47,8 +47,9 @@ Click the **OpenCode V2** icon in the right sidebar to instantly focus or create
 
 ## Requirements
 
-- **JetBrains IDE**: IntelliJ IDEA, WebStorm, PyCharm, etc. — **2026.2** or later (the plugin is built
-  against IntelliJ Platform 2026.2, `since-build 262`)
+- **JetBrains IDE**: IntelliJ IDEA, WebStorm, PyCharm, etc. — **2024.2** or later (`since-build 242`).
+  The plugin is compiled against IntelliJ Platform 2024.2 (so the bytecode runs on the JBR 21 that
+  ships with those builds) and verified against the current releases.
 - **OpenCode v2 CLI**: the plugin targets opencode **v2** (verified with 2.0.x) and warns once when it
   connects to a different major version.
 
@@ -93,6 +94,8 @@ Press `Cmd+Esc` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two
   (`/doc`) in an IDE tab backed by JCEF instead of the terminal tab. The choice is remembered along
   with the other connection settings. Requires JCEF support in the IDE (present in all mainstream
   JetBrains IDEs; without it the terminal tab is used).
+  The web tab is registered through the `com.intellij.modules.jcef` module, which exists from
+  **2026.2** on; on 2024.2–2025.x the plugin runs in terminal mode only.
 
 *Your last connection settings (address, mode, password) are remembered automatically.*
 
