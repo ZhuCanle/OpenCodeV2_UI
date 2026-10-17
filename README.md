@@ -41,9 +41,9 @@ Click the **OpenCode V2** icon in the right sidebar to instantly focus or create
 
 ### Context Menus
 
-- **Editor**: Right-click in the editor → **Add lines to OpenCode Terminal** (last item in the menu)
-- **Project View**: Right-click on files/folders → **Add to OpenCode Terminal**
-- **Tools menu**: **Tools** → **Open OpenCode** (same action as the Quick Launch shortcut)
+- **Editor**: Right-click in the editor → **Add lines to OpenCode V2 Terminal** (last item in the menu)
+- **Project View**: Right-click on files/folders → **Add to OpenCode V2 Terminal**
+- **Tools menu**: **Tools** → **Open OpenCode V2** (same action as the Quick Launch shortcut)
 
 ## Requirements
 
@@ -153,9 +153,9 @@ All shortcuts are customizable via **Settings** → **Keymap** → search for "O
 
 | Action (label shown in Keymap) | Mac | Windows/Linux |
 |--------------------------------|-----|---------------|
-| `Open OpenCode` (Quick Launch) | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
-| `Add lines to OpenCode Terminal` (editor) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
-| `Add to OpenCode Terminal` (Project View) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
+| `Open OpenCode V2` (Quick Launch) | `Cmd + Shift + Esc` | `Ctrl + Shift + \` |
+| `Add lines to OpenCode V2 Terminal` (editor) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
+| `Add to OpenCode V2 Terminal` (Project View) | `Opt + Cmd + Shift + K` | `Ctrl + Alt + Shift + K` |
 
 ## Terminal Management
 

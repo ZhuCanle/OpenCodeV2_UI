@@ -30,8 +30,8 @@
   <actions>
     <action id="OpenCodeV2.QuickLaunch"
             class="com.zhucanle.opencodev2.ide.QuickLaunchAction"
-            text="Open OpenCode"
-            description="Open or focus the OpenCode terminal"
+            text="Open OpenCode V2"
+            description="Open or focus the OpenCode V2 terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ToolsMenu" anchor="first"/>
       <keyboard-shortcut keymap="$default" first-keystroke="control shift BACK_SLASH"/>
@@ -41,7 +41,7 @@
 
     <action id="OpenCodeV2.AddLines"
             class="com.zhucanle.opencodev2.ide.SendSelectionToTerminalAction"
-            text="Add lines to OpenCode Terminal"
+            text="Add lines to OpenCode V2 Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>
       <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
@@ -51,7 +51,7 @@
 
     <action id="OpenCodeV2.AddFile"
             class="com.zhucanle.opencodev2.ide.SendSelectionToTerminalAction"
-            text="Add to OpenCode Terminal"
+            text="Add to OpenCode V2 Terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
       <keyboard-shortcut keymap="$default" first-keystroke="control alt shift K"/>
