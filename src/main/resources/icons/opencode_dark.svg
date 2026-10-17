@@ -1,6 +1,7 @@
 <!-- 16x16 action / tool window icon for dark themes: same geometry as `opencode.svg`,
      white ink so the mark and the "v2" knockout stay readable on dark backgrounds. -->
-<svg width="16" height="16" viewBox="0 0 24 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- Same geometry and cropped viewBox as `opencode.svg`; white ink for dark themes. -->
+<svg width="16" height="16" viewBox="0 6 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
       <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>

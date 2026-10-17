@@ -1,7 +1,10 @@
 <!-- 16x16 action / tool window icon for light themes.
      Same mark and "v2" knockout as the plugin logo. The platform swaps in the
      `opencode_dark.svg` sibling automatically when the current theme is dark. -->
-<svg width="16" height="16" viewBox="0 0 24 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+<!-- The viewBox is cropped to the mark's own bounds (y 6..36) so the icon uses the
+     full 16x16 box; the upstream icon left a sixth of the height empty, which made the
+     mark - and with it the "v2" knockout - needlessly small. -->
+<svg width="16" height="16" viewBox="0 6 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
       <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>
