@@ -1,6 +1,18 @@
-<!-- 16x16 action / tool window icon for dark themes (same geometry as `opencode.svg`,
-     inverted ink so it stays visible on dark backgrounds). -->
+<!-- 16x16 action / tool window icon for dark themes: same geometry as `opencode.svg`,
+     white ink so the mark and the "v2" knockout stay readable on dark backgrounds. -->
 <svg width="16" height="16" viewBox="0 0 24 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M18 30H6V18H18V30Z" fill="#FFFFFF"/>
-  <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#FFFFFF"/>
+  <defs>
+    <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
+      <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>
+      <g transform="translate(6.3 25.15)">
+        <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#000000"/>
+        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" fill="none" stroke="#000000"
+              stroke-width="2.2" stroke-linecap="butt" stroke-linejoin="miter"/>
+      </g>
+    </mask>
+  </defs>
+  <g mask="url(#v2)" fill="#FFFFFF">
+    <path d="M18 30H6V18H18V30Z"/>
+    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+  </g>
 </svg>

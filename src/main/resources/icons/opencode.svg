@@ -1,7 +1,22 @@
 <!-- 16x16 action / tool window icon for light themes.
-     The dark-theme sibling is `opencode_dark.svg`; the platform picks it up automatically
-     because of the `_dark` suffix. Keep both files' geometry identical. -->
+     Same mark and "v2" knockout as the plugin logo. The platform swaps in the
+     `opencode_dark.svg` sibling automatically when the current theme is dark. -->
 <svg width="16" height="16" viewBox="0 0 24 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <path d="M18 30H6V18H18V30Z" fill="#0F0F0F"/>
-  <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#0F0F0F"/>
+  <defs>
+    <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
+      <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>
+      <!-- Same "v2" letterforms as pluginIcon.svg, placed over the solid bottom-right
+           area of the mark. The glyphs are scaled up and the "2" is drawn a bit bolder
+           than in the 40px logo so they still read in a 16px icon. -->
+      <g transform="translate(6.3 25.15)">
+        <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#000000"/>
+        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" fill="none" stroke="#000000"
+              stroke-width="2.2" stroke-linecap="butt" stroke-linejoin="miter"/>
+      </g>
+    </mask>
+  </defs>
+  <g mask="url(#v2)" fill="#0F0F0F">
+    <path d="M18 30H6V18H18V30Z"/>
+    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+  </g>
 </svg>
