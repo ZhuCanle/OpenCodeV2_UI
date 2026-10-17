@@ -1,15 +1,23 @@
 <!-- Plugin Logo (dark themes): same geometry, inverted colour so it stays visible on dark backgrounds. -->
 <svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- opencode mark, 22.8x28.5 -->
-  <g transform="translate(2 5.75) scale(0.95) translate(0 -6)" fill="#FFFFFF">
-    <path d="M18 30H6V18H18V30Z"/>
-    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
-  </g>
-  <!-- "v" -->
-  <g transform="translate(25.8 26.71) scale(0.82)" fill="none" stroke="#FFFFFF" stroke-width="1.9"
-     stroke-linecap="butt" stroke-linejoin="miter">
-    <path d="M0.95 0.95 L3.6 8.25 L6.25 0.95"/>
-    <!-- "2" -->
-    <path d="M8.6 1.0 H13.9 V4.6 H8.6 V8.2 H13.9"/>
+  <defs>
+    <!-- The "v2" is a hole in the mark, so it renders in the surrounding colour on any theme. -->
+    <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="44" height="44">
+      <rect x="-2" y="-2" width="44" height="44" fill="#FFFFFF"/>
+      <g transform="translate(17.05 26.3)" fill="none" stroke="#000000" stroke-width="1.9"
+         stroke-linecap="butt" stroke-linejoin="miter">
+        <!-- "v" -->
+        <path d="M0.95 0.95 L3.6 8.25 L6.25 0.95"/>
+        <!-- "2" -->
+        <path d="M8.6 1.0 H13.9 V4.6 H8.6 V8.2 H13.9"/>
+      </g>
+    </mask>
+  </defs>
+  <!-- opencode mark: 28.8x36, filling the 36x36 safe area -->
+  <g mask="url(#v2)">
+    <g transform="translate(5.6 -5.2) scale(1.2)" fill="#FFFFFF">
+      <path d="M18 30H6V18H18V30Z"/>
+      <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+    </g>
   </g>
 </svg>
