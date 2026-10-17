@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.2.0"
+version = "1.2.1"
 
 repositories {
     mavenCentral()
@@ -50,6 +50,11 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.2.1</h2>
+            <ul>
+                <li>New: the plugin logo and the tool window icon now carry a "v2" mark, so the plugin is easy to tell apart from the upstream OpenCode UI plugin.</li>
+                <li>Fix: the tool window / action icons were invisible in light themes; they now follow the IDE theme (dark ink on light themes, white ink on dark themes).</li>
+            </ul>
             <h2>1.2.0</h2>
             <ul>
                 <li>New: opencode v2 support. The plugin now drives the v2 background service: local sessions attach to the service started by the CLI (discovered via `opencode service status` and authenticated with the password from `service.json`), and remote sessions connect with host:port plus the Basic auth password printed by `opencode serve`.</li>
