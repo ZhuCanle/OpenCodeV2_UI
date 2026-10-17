@@ -8,8 +8,10 @@
       <g transform="translate(16.2 26.3)">
         <!-- "v": flat top cuts, slanted sides, truncated horizontal bottom -->
         <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#000000"/>
-        <!-- "2": 7-segment digital style, top and bottom edges aligned with the "v" -->
-        <path d="M9.45 0.95 H14.75 V4.6 H9.45 V8.25 H14.75" fill="none" stroke="#000000" stroke-width="1.9"
+        <!-- "2": 7-segment digital style. The path starts and ends on the cell edges
+             (x 8.5 / 15.7) so the top, middle and bottom bars all begin and end
+             at the same x, and the top/bottom edges line up with the "v". -->
+        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" fill="none" stroke="#000000" stroke-width="1.9"
               stroke-linecap="butt" stroke-linejoin="miter"/>
       </g>
     </mask>
