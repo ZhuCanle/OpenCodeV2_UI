@@ -5,12 +5,8 @@
 
 A JetBrains IDE plugin that integrates [OpenCode V2](https://opencode.ai) — the open-source AI coding agent — directly into your development workflow.
 
-**For OpenCode V2 Only!!!**
-
 > **This is a community derivative of [OpenCode UI](https://github.com/LaiZhou/OpenCode_UI)** by LaiZhou,
-> extended with opencode **v2** support. It is published as a separate plugin (own id, own name, own
-> keyboard shortcuts) so it can be installed alongside the original. See
-> [Credits and Acknowledgements](#credits-and-acknowledgements).
+> **For opencode v2 support only!!!**.
 
 ## Features
 
