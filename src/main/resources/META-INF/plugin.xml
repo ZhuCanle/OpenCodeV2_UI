@@ -3,14 +3,17 @@
   <id>com.zhucanle.opencodev2.ide</id>
   <name>OpenCode V2 UI (unofficial)</name>
   <vendor url="https://github.com/ZhuCanle/OpenCodeV2_UI">zclyde</vendor>
-  
 
   <description><![CDATA[
     <b>OpenCode V2 UI (unofficial) - AI Coding Agent for JetBrains IDEs</b><br><br>
-    
+
     Seamlessly integrates <a href="https://opencode.ai">OpenCode V2</a> directly into your workflow.<br><br>
-    <b>For OpenCode V2 Only!!!</b>
-    
+    <b>For OpenCode V2 Only!!!</b><br>
+    <ul>
+        <li><b>IntelliJ Platform 2024.2 or newer</b> (IntelliJ IDEA, WebStorm, PyCharm, ...).</li>
+        <li><b>opencode v2 CLI</b>, installed and available on <code>PATH</code> - the plugin is a UI bridge and does not bundle the agent. <code>brew install anomalyco/tap/opencode-v2</code> (macOS / Linux), or see <a href="https://opencode.ai/download">opencode.ai/download</a>. v1 is not supported: both versions provide an <code>opencode</code> binary, so keep only v2 installed.</li>
+    </ul>
+
     <b>Key Features:</b><br>
     <ul>
         <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+Esc</code> / <code>Ctrl+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
