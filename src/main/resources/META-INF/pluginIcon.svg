@@ -16,11 +16,12 @@
       </g>
     </mask>
   </defs>
-  <!-- opencode mark: 28.8x36, filling the 36x36 safe area -->
+  <!-- opencode mark: 28.8x36, filling the 36x36 safe area. The inner block is drawn at 60%
+       opacity, matching the upstream opencode logo (a rectangular frame with a lighter block). -->
   <g mask="url(#v2)">
-    <g transform="translate(5.6 -5.2) scale(1.2)" fill="#0F0F0F">
-      <path d="M18 30H6V18H18V30Z"/>
-      <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+    <g transform="translate(5.6 -5.2) scale(1.2)">
+      <path d="M18 30H6V18H18V30Z" fill="#0F0F0F" opacity="0.6"/>
+      <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#0F0F0F"/>
     </g>
   </g>
 </svg>

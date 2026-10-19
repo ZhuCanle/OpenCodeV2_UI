@@ -13,9 +13,10 @@
     </mask>
   </defs>
   <!-- #DFE1E5 is the ink IntelliJ's own dark-theme action icons use, so the menu
-       entry does not look brighter than its neighbours. -->
-  <g mask="url(#v2)" fill="#DFE1E5">
-    <path d="M18 30H6V18H18V30Z"/>
-    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+       entry does not look brighter than its neighbours. The inner block keeps the upstream
+       opencode logo's 60% opacity (rectangular frame with a lighter block). -->
+  <g mask="url(#v2)">
+    <path d="M18 30H6V18H18V30Z" fill="#DFE1E5" opacity="0.6"/>
+    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#DFE1E5"/>
   </g>
 </svg>

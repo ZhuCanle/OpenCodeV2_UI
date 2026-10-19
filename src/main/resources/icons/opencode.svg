@@ -18,8 +18,10 @@
       </g>
     </mask>
   </defs>
-  <g mask="url(#v2)" fill="#0F0F0F">
-    <path d="M18 30H6V18H18V30Z"/>
-    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z"/>
+  <!-- The inner block keeps the upstream opencode logo's 60% opacity, so the mark reads as a
+       rectangular frame with a lighter block rather than as a solid shape. -->
+  <g mask="url(#v2)">
+    <path d="M18 30H6V18H18V30Z" fill="#0F0F0F" opacity="0.6"/>
+    <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#0F0F0F"/>
   </g>
 </svg>
