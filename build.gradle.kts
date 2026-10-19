@@ -31,6 +31,9 @@ dependencies {
         // Terminal API
         bundledPlugin("org.jetbrains.plugins.terminal")
 
+        // Plugin Verifier CLI used by `./gradlew verifyPlugin`.
+        pluginVerifier()
+
         // JCEF is part of the product itself up to 2025.x (it only became a separate bundled
         // plugin on 2026.2), so there is nothing extra to add for 2024.2.
     }
@@ -54,6 +57,7 @@ intellijPlatform {
             <h2>1.3.0</h2>
             <ul>
                 <li>New: the plugin now supports IntelliJ Platform 2024.2 and newer (since-build 242). It is compiled against IntelliJ IDEA 2024.2, so the bytecode runs on the JBR 21 shipped with 2024.2 - 2025.x and still loads on the current 2026.x releases.</li>
+                <li>Fix: quick launch is now Cmd+\ on macOS (Ctrl+\ on Windows/Linux). The old Cmd+Esc binding collided with the IDE's own Vcs.CombinedDiff.ToggleCollapseBlock action, so pressing it often did nothing; Shift+Cmd+Esc is registered as a second macOS shortcut.</li>
                 <li>Note: the optional JCEF web tab is registered through the com.intellij.modules.jcef module, which only exists from 2026.2 on. On 2024.2 - 2025.x the plugin runs in terminal mode only.</li>
             </ul>
             <h2>1.2.2</h2>

@@ -74,7 +74,7 @@ Then open **Settings** → **Plugins** → ⚙ → **Install Plugin from Disk…
 
 ### 1. Launch OpenCode Terminal
 
-Press `Cmd+Esc` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two modes are supported:
+Press `Cmd+\` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two modes are supported:
 
 - **Local (default)**: The plugin uses the opencode v2 **background service**. If the service is not
   running it starts it (`opencode service start`), discovers its URL via `opencode service status`,
@@ -191,13 +191,19 @@ only one installed.
 
 ### Terminal not responding
 
-Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+Esc` or `Ctrl+\` again to create a fresh session.
+Try closing the "OpenCode({port})" terminal tab and pressing `Cmd+\` (Mac) or `Ctrl+\` (Win/Linux) again to create a fresh session.
 
 ### Shortcuts not working
 
 1. Check for conflicts in **Settings** → **Keymap**
 2. Search for your shortcut to see if it's assigned to another action
 3. Reassign or remove conflicting shortcuts
+
+On macOS the launch shortcut is **`Cmd+\`**, not `Ctrl+\`: the plugin declares it in the `$default`
+keymap, where the primary modifier becomes `Command` (on Windows and Linux that same entry is
+`Ctrl+\`). The original v1 binding, `Cmd+Esc`, is deliberately **not** used any more - the IDE's own
+`Vcs.CombinedDiff.ToggleCollapseBlock` action already owns that keystroke, so only one of the two
+could ever fire. `Shift+Cmd+Esc` is registered as a second macOS shortcut.
 
 ## Credits and Acknowledgements
 
@@ -214,7 +220,8 @@ Changes made in this derivative:
 - opencode **v2** support (background service discovery, `/api` HTTP + SSE surface)
 - a distinct plugin id, display name, tool window id and action ids, so this plugin and the
   original can be installed **side by side**
-- the same default keyboard shortcuts as the original (`Cmd+Esc` / `Opt+Cmd+K` on macOS).
+- the same shortcut scheme as the original (`Opt+Cmd+K` on macOS). The launch shortcut is `Cmd+\`
+  instead of the original `Cmd+Esc`, because `Cmd+Esc` collides with the IDE's own VCS diff action.
   If you install both plugins, rebind one of them in **Settings → Keymap**
 
 See the [commit history](https://github.com/ZhuCanle/OpenCodeV2_UI/commits/main) for the full record.

@@ -105,7 +105,7 @@ The codebase follows a modular structure within the main package `com.zhucanle.o
 src/main/kotlin/com/zhucanle/opencodev2/ide/
 ├── OpenCodeService.kt          # CORE: Main project service, manages connection & lifecycle
 ├── OpenCodeToolWindow.kt       # UI: Entry point for the ToolWindow
-├── QuickLaunchAction.kt        # Action: Cmd+Esc handler
+├── QuickLaunchAction.kt        # Action: Cmd+\ (macOS) / Ctrl+\ (Win/Linux) handler
 ├── api/                        # NETWORKING: REST & SSE clients
 │   ├── OpenCodeApiClient.kt    # HTTP calls (OkHttp)
 │   ├── SseEventListener.kt     # Server-Sent Events handler

@@ -16,7 +16,7 @@
 
     <b>Key Features:</b><br>
     <ul>
-        <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+Esc</code> / <code>Ctrl+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
+        <li><b>Quick Launch:</b> Connect to the OpenCode v2 service, attach to a remote server, or open a new terminal with <code>Cmd+\</code> / <code>Ctrl+\</code>. Local connections authenticate automatically; remote servers use the password printed by <code>opencode serve</code>.</li>
         <li><b>Context Sharing:</b> Send current file, selection, or Project View items to the agent with <code>Opt+Cmd+K</code> / <code>Ctrl+Alt+K</code>.</li>
         <li><b>Native Diff Review:</b> Review AI-generated changes in a multi-file diff viewer. Accept stages changes (<code>git add</code>), Reject restores original content. Automatic snapshots ensure you can always recover previous versions.</li>
     </ul>
@@ -38,9 +38,12 @@
             description="Open or focus the OpenCode V2 terminal"
             icon="/icons/opencode.svg">
       <add-to-group group-id="ToolsMenu" anchor="first"/>
+      <!-- $default shortcuts use the platform-primary modifier: Ctrl on Windows/Linux, Command on macOS. -->
       <keyboard-shortcut keymap="$default" first-keystroke="control BACK_SLASH"/>
-      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta ESCAPE"/>
-      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta ESCAPE"/>
+      <!-- Command+Escape (the original v1 binding) belongs to the IDE's own
+           Vcs.CombinedDiff.ToggleCollapseBlock action, so macOS gets Shift+Command+Escape instead. -->
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="shift meta ESCAPE"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="shift meta ESCAPE"/>
     </action>
 
     <action id="OpenCodeV2.AddLines"
