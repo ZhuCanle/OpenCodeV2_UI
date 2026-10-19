@@ -3,7 +3,9 @@ package com.zhucanle.opencodev2.ide
 import com.intellij.openapi.actionSystem.ActionManager
 import com.intellij.openapi.actionSystem.KeyboardShortcut
 import com.intellij.openapi.keymap.KeymapManager
+import com.intellij.openapi.util.SystemInfo
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import javax.swing.KeyStroke
 
 /**
  * Guards the quick launch key bindings.
@@ -36,6 +38,26 @@ class QuickLaunchShortcutTest : BasePlatformTestCase() {
             }
             assertEmpty("${shortcut.firstKeyStroke} is also bound to $clashes", clashes)
         }
+    }
+
+    /**
+     * The README, the plugin description and this test must agree on the macOS bindings:
+     * `Cmd+\` is the documented primary shortcut and `Shift+Cmd+Esc` the documented alternative.
+     */
+    fun testMacOsLaunchShortcutsMatchTheDocumentedOnes() {
+        if (!SystemInfo.isMac) return
+
+        val strokes = shortcutsOf("OpenCodeV2.QuickLaunch").map { it.firstKeyStroke }
+
+        assertContainsElements(
+            strokes,
+            KeyStroke.getKeyStroke("meta BACK_SLASH"),
+            KeyStroke.getKeyStroke("shift meta ESCAPE")
+        )
+        assertFalse(
+            "Cmd+Esc is owned by Vcs.CombinedDiff.ToggleCollapseBlock and must not be bound again",
+            strokes.contains(KeyStroke.getKeyStroke("meta ESCAPE"))
+        )
     }
 
     private fun shortcutsOf(actionId: String): List<KeyboardShortcut> =

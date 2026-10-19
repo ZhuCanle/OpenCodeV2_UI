@@ -12,7 +12,7 @@ A JetBrains IDE plugin that integrates [OpenCode V2](https://opencode.ai) — th
 
 | Feature | Description | Shortcut (Mac) | Shortcut (Win/Linux) |
 |---------|-------------|----------------|----------------------|
-| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + Esc` | `Ctrl + \` |
+| **Quick Launch** | Connect to existing OpenCode server or create new terminal | `Cmd + \` | `Ctrl + \` |
 | **Add to Terminal** | Send current file/selection or selected files to OpenCode | `Opt + Cmd + K` | `Ctrl + Alt + K` |
 | **Diff Review** | View diffs and accept/reject changes in IDE | — | — |
 | **Notifications** | System alert when task completes | — | — |
@@ -152,7 +152,7 @@ All shortcuts are customizable via **Settings** → **Keymap** → search for "O
 
 | Action (label shown in Keymap) | Mac | Windows/Linux |
 |--------------------------------|-----|---------------|
-| `Open OpenCode V2` (Quick Launch) | `Cmd + Esc` | `Ctrl + \` |
+| `Open OpenCode V2` (Quick Launch) | `Cmd + \` or `Shift + Cmd + Esc` | `Ctrl + \` |
 | `Add lines to OpenCode V2 Terminal` (editor) | `Opt + Cmd + K` | `Ctrl + Alt + K` |
 | `Add to OpenCode V2 Terminal` (Project View) | `Opt + Cmd + K` | `Ctrl + Alt + K` |
 
