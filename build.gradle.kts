@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.1"
+version = "1.3.2"
 
 repositories {
     mavenCentral()
@@ -54,10 +54,11 @@ intellijPlatform {
         }
 
         changeNotes = """
-            <h2>1.3.1</h2>
+            <h2>1.3.2</h2>
             <ul>
                 <li>New: the plugin now supports IntelliJ Platform 2024.2 and newer (since-build 242). It is compiled against IntelliJ IDEA 2024.2, so the bytecode runs on the JBR 21 shipped with 2024.2 - 2025.x and still loads on the current 2026.x releases.</li>
                 <li>Fix: quick launch is now Cmd+\ on macOS (Ctrl+\ on Windows/Linux). The old Cmd+Esc binding collided with the IDE's own Vcs.CombinedDiff.ToggleCollapseBlock action, so pressing it often did nothing; Shift+Cmd+Esc is registered as a second macOS shortcut.</li>
+                <li>Fix: the opencode TUI now starts in Git Bash and Cygwin on Windows. The plugin typed the resolved CLI path into the terminal as C:\Users\...\opencode.exe, and POSIX shells treat backslashes as escape characters, so the command collapsed to C:Users...opencode.exe and was not found (issue #1). The command now uses a forward-slash drive path (C:/Users/.../opencode.exe), which Git Bash/MSYS2 resolves natively and cmd.exe and PowerShell accept as well.</li>
                 <li>Fix: the icons match the upstream opencode logo again - the mark's inner block keeps its original 60% opacity, so the mark reads as a rectangular frame with a lighter block instead of a solid shape.</li>
                 <li>Note: the optional JCEF web tab is registered through the com.intellij.modules.jcef module, which only exists from 2026.2 on. On 2024.2 - 2025.x the plugin runs in terminal mode only.</li>
             </ul>
