@@ -32,8 +32,8 @@
 - `opencode service status`：服务已运行时打印其 URL，例如 `http://127.0.0.1:49374`。
 - `opencode service start`：服务未运行时启动它；重复调用返回 "already running"。
 - 密码文件位置（`OpenCodeServiceDiscovery.defaultConfigDir()`）：
-  - macOS/Linux：`$XDG_CONFIG_HOME/opencode`，默认 `~/.config/opencode`
-  - Windows：`%APPDATA%\opencode`
+  - 所有平台（含 Windows）：`$XDG_CONFIG_HOME/opencode`，默认 `~/.config/opencode`
+  - Windows 兼容回退：`%APPDATA%\opencode`
   - 文件名为 `service.json`，内容形如 `{"password": "..."}`（文件权限 600）。
 - 插件从不停止全局共享的后台服务；断开连接时只释放自己的 API/SSE 客户端。
 

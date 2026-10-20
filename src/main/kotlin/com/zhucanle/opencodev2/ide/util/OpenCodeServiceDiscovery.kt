@@ -57,20 +57,11 @@ object OpenCodeServiceDiscovery {
     }
 
     /**
-     * The OpenCode configuration directory:
-     * - Windows: `%APPDATA%\opencode`
-     * - otherwise: `$XDG_CONFIG_HOME/opencode`, falling back to `~/.config/opencode`
+     * The OpenCode configuration directory: `$XDG_CONFIG_HOME/opencode`, falling back to
+     * `~/.config/opencode`. This is the same on every platform, including Windows, because
+     * opencode v2 writes its files to the XDG-style location there too.
      */
     fun defaultConfigDir(): File {
-        val osName = System.getProperty("os.name").orEmpty().lowercase()
-        if (osName.contains("win")) {
-            val appData = System.getenv("APPDATA")
-            if (!appData.isNullOrBlank()) {
-                return File(appData, "opencode")
-            }
-            return File(System.getProperty("user.home"), "opencode")
-        }
-
         val xdgConfigHome = System.getenv("XDG_CONFIG_HOME")
         val configRoot = if (!xdgConfigHome.isNullOrBlank()) {
             File(xdgConfigHome)
@@ -78,6 +69,24 @@ object OpenCodeServiceDiscovery {
             File(System.getProperty("user.home"), ".config")
         }
         return File(configRoot, "opencode")
+    }
+
+    /**
+     * Config directories that may hold `service.json`, in priority order.
+     *
+     * The primary location is [defaultConfigDir]. On Windows, `%APPDATA%\opencode` is kept as a
+     * legacy fallback for older builds that used it.
+     */
+    private fun configDirCandidates(): List<File> {
+        val dirs = mutableListOf(defaultConfigDir())
+        val osName = System.getProperty("os.name").orEmpty().lowercase()
+        if (osName.contains("win")) {
+            val appData = System.getenv("APPDATA")
+            if (!appData.isNullOrBlank()) {
+                dirs.add(File(appData, "opencode"))
+            }
+        }
+        return dirs
     }
 
     /**
@@ -138,7 +147,7 @@ object OpenCodeServiceDiscovery {
         }
 
         val endpoint = parsed ?: return null
-        return ServiceEndpoint(endpoint.first, endpoint.second, readPasswordWithRetry())
+        return ServiceEndpoint(endpoint.first, endpoint.second, readPasswordWithRetry(configDirCandidates()))
     }
 
     /**
@@ -155,9 +164,21 @@ object OpenCodeServiceDiscovery {
         configDir: File = defaultConfigDir(),
         attempts: Int = PASSWORD_READ_ATTEMPTS,
         delayMs: Long = PASSWORD_READ_DELAY_MS
+    ): String? = readPasswordWithRetry(listOf(configDir), attempts, delayMs)
+
+    /**
+     * Same as [readPasswordWithRetry] but checks every directory in [configDirs] on each attempt,
+     * so a password written to either the current or a legacy location is picked up.
+     */
+    internal fun readPasswordWithRetry(
+        configDirs: List<File>,
+        attempts: Int = PASSWORD_READ_ATTEMPTS,
+        delayMs: Long = PASSWORD_READ_DELAY_MS
     ): String? {
         repeat(attempts) { attempt ->
-            readPassword(configDir)?.let { return it }
+            for (configDir in configDirs) {
+                readPassword(configDir)?.let { return it }
+            }
             if (attempt < attempts - 1) {
                 try {
                     Thread.sleep(delayMs)

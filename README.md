@@ -79,7 +79,8 @@ Press `Cmd+\` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two m
 - **Local (default)**: The plugin uses the opencode v2 **background service**. If the service is not
   running it starts it (`opencode service start`), discovers its URL via `opencode service status`,
   and reads its Basic auth password from `service.json` in the opencode config directory
-  (`~/.config/opencode/service.json`, or `%APPDATA%\opencode\service.json` on Windows). It then opens
+  (`~/.config/opencode/service.json` on every platform; on Windows `%APPDATA%\opencode\service.json`
+  is also checked as a legacy fallback). It then opens
   a TUI terminal tab (e.g. `OpenCode(49374)`) attached to that same service. The dialog host/port are
   ignored for local use — the service owns its port, and the password is discovered automatically.
 - **Remote / existing server**: Enter `host:port` (e.g., `10.0.0.5:4096`) and the **password** to

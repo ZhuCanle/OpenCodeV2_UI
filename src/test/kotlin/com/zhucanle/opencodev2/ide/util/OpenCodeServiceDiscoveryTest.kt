@@ -63,6 +63,17 @@ class OpenCodeServiceDiscoveryTest {
     }
 
     @Test
+    fun readPasswordWithRetryFindsPasswordInAnyCandidateDir() {
+        val empty = tempDir()
+        val legacy = tempDir()
+        File(legacy, "service.json").writeText("""{"password":"from-legacy"}""")
+        assertEquals(
+            "from-legacy",
+            OpenCodeServiceDiscovery.readPasswordWithRetry(listOf(empty, legacy), attempts = 1, delayMs = 1)
+        )
+    }
+
+    @Test
     fun readPasswordWithRetryWaitsForTheFileToAppear() {
         val dir = tempDir()
         val writer = Thread {
