@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.2"
+version = "1.3.3"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.3</h2>
+            <ul>
+                <li>Fix: on Windows the local service password is now read from the config directory opencode v2 actually uses (~/.config/opencode, i.e. %USERPROFILE%\.config\opencode, or ${'$'}XDG_CONFIG_HOME/opencode). The plugin looked only in %APPDATA%\opencode, so local sessions could fail to authenticate; %APPDATA%\opencode is still checked as a legacy fallback.</li>
+            </ul>
             <h2>1.3.2</h2>
             <ul>
                 <li>New: the plugin now supports IntelliJ Platform 2024.2 and newer (since-build 242). It is compiled against IntelliJ IDEA 2024.2, so the bytecode runs on the JBR 21 shipped with 2024.2 - 2025.x and still loads on the current 2026.x releases.</li>
