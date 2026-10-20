@@ -41,6 +41,7 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.concurrency.AppExecutorUtil
 
+import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalView
 
 import java.time.LocalDateTime
@@ -806,7 +807,9 @@ class OpenCodeService(private val project: Project) : Disposable {
             terminalEditor?.let { 
                 val cmd = command ?: getOpenCodeBinary()
                 // v2: no --hostname/--port; the TUI attaches to the background service itself.
-                w.executeCommand(OpenCodeCommand.tui(cmd, cont)); pinTerminalTab(f)
+                // The command is typed into the user's shell, so the path form depends on that shell.
+                val shell = OpenCodeCommand.detectShell(TerminalProjectOptionsProvider.getInstance(project).shellPath)
+                w.executeCommand(OpenCodeCommand.tui(cmd, cont, shell)); pinTerminalTab(f)
             }
         }
     }
