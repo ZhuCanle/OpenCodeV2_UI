@@ -13,6 +13,7 @@ import com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalLinkFilter
 import com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalVirtualFile
 import com.zhucanle.opencodev2.ide.terminal.TerminalTextWriter
 import com.zhucanle.opencodev2.ide.ui.OpenCodeConnectDialog
+import com.zhucanle.opencodev2.ide.util.OpenCodeCliResolver
 import com.zhucanle.opencodev2.ide.util.OpenCodeCommand
 import com.zhucanle.opencodev2.ide.util.OpenCodeServiceDiscovery
 import com.zhucanle.opencodev2.ide.util.PathUtil
@@ -854,7 +855,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     /** Detect OpenCode binary path (Background thread safe) */
     private fun detectOpenCodeBinary(): String? {
         val home = System.getProperty("user.home")
-        val exe = if (isWindows()) ".exe" else ""
+//        val exe = if (isWindows()) ".exe" else ""
         
         // Check common installation paths (ordered by priority)
         val candidates = if (isWindows()) {
@@ -884,30 +885,41 @@ class OpenCodeService(private val project: Project) : Disposable {
             }
         }
 
-        // Fallback: Check PATH (may fail in sandboxed environments like Snap)
-        if (checkOpenCodeCliAvailable()) {
-            logger.info("[OpenCode] CLI detected in PATH")
-            _cachedBinary = "opencode"
-            return "opencode"
+        // Fallback: look the CLI up in PATH (may fail in sandboxed environments like Snap)
+        resolveCliFromPath()?.let { path ->
+            logger.info("[OpenCode] CLI detected in PATH: $path")
+            _cachedBinary = path
+            return path
         }
 
         return null
     }
 
-    /** Check CLI availability (safe for background thread) */
-    private fun checkOpenCodeCliAvailable(): Boolean {
-        val cmds = if (isWindows()) {
-            listOf(
-                listOf("cmd", "/c", "where", "opencode"),
-                listOf("powershell", "-Command", "Get-Command opencode")
-            )
-        } else {
-            listOf(
-                listOf("which", "opencode"),
-                listOf("sh", "-lc", "command -v opencode")
-            )
+    /**
+     * Resolves the CLI from PATH.
+     *
+     * On Windows the result must be a file CreateProcess can start, so `where opencode` is parsed
+     * down to its first `.exe`/`.com`/`.cmd`/`.bat` match: the bare name fails because Java only
+     * appends `.exe` to it, while the first PATH match is usually the extensionless POSIX launcher
+     * shipped by npm and Scoop (issue #2). POSIX shells resolve a bare name via `execvp`, so there
+     * the name itself is a valid command.
+     */
+    private fun resolveCliFromPath(): String? {
+        if (isWindows()) {
+            val whereOutput = runQuietly(listOf("cmd", "/c", "where", "opencode")) ?: return null
+            return OpenCodeCliResolver.selectWindowsExecutable(whereOutput)
         }
-        return cmds.any { try { CapturingProcessHandler(GeneralCommandLine(it)).runProcess(5000).exitCode == 0 } catch (_: Exception) { false } }
+        val available = runQuietly(listOf("which", "opencode")) != null ||
+            runQuietly(listOf("sh", "-lc", "command -v opencode")) != null
+        return if (available) "opencode" else null
+    }
+
+    /** Runs [command] and returns its stdout, or null when it cannot be started or reports failure. */
+    private fun runQuietly(command: List<String>): String? = try {
+        val output = CapturingProcessHandler(GeneralCommandLine(command)).runProcess(5000)
+        if (output.exitCode == 0) output.stdout else null
+    } catch (_: Exception) {
+        null
     }
     
     /** Show CLI not found error (must call on any thread, will dispatch to EDT) */
