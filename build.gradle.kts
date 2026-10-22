@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.3"
+version = "1.3.4"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.4</h2>
+            <ul>
+                <li>Fix: on Windows the opencode CLI is now resolved to a real executable (opencode.cmd or opencode.exe) instead of the bare name opencode. Java starts processes through CreateProcess, which only appends .exe to a bare name, so an install from Scoop or npm - where PATH leads with the extensionless POSIX launcher and the Windows entry point is opencode.cmd - was detected but could never be executed, and the local service stayed unavailable (issue #2). The CLI is now read from the "where opencode" output and the first .exe/.com/.cmd/.bat entry is used.</li>
+            </ul>
             <h2>1.3.3</h2>
             <ul>
                 <li>Fix: on Windows the local service password is now read from the config directory opencode v2 actually uses (~/.config/opencode, i.e. %USERPROFILE%\.config\opencode, or ${'$'}XDG_CONFIG_HOME/opencode). The plugin looked only in %APPDATA%\opencode, so local sessions could fail to authenticate; %APPDATA%\opencode is still checked as a legacy fallback.</li>
