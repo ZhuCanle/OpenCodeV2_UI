@@ -753,7 +753,7 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun connectToExistingServer(h: String, p: Int, a: ServerAuth, ui: Boolean, web: Boolean, customBasePath: String? = null) {
         hostname = h; port = p; username = a.username; password = a.password
-        if (ui) { if (web) createWebUI(h, p) else createTerminalUIInternal(h, p, a.password, false, null, customBasePath) }
+        if (ui) { if (web) createWebUI(h, p) else createTerminalUIInternal(p, false, null, customBasePath) }
         else { ApplicationManager.getApplication().invokeLater { Messages.showInfoMessage(project, "Connected to $h:$p", "OpenCode") } }
         initializeApiClient(h, p); startConnectionManager()
     }
@@ -771,7 +771,7 @@ class OpenCodeService(private val project: Project) : Disposable {
             }
             ApplicationManager.getApplication().invokeLater {
                 hostname = h; port = p; lastMode = ConnectionMode.WEB
-                createTerminalUIInternal(h, p, pwd, true, bin, customBasePath)
+                createTerminalUIInternal(p, true, bin, customBasePath)
             }
             // Bounded readiness poll against `/api/info`; the ConnectionManager retries anyway.
             if (!awaitServiceReady(h, p, pwd)) {
@@ -814,7 +814,7 @@ class OpenCodeService(private val project: Project) : Disposable {
                 hostname = endpoint.host; port = endpoint.port; password = endpoint.password
                 username = ServerAuth.DEFAULT_USERNAME
                 lastMode = ConnectionMode.TERMINAL
-                createTerminalUIInternal(endpoint.host, endpoint.port, endpoint.password, true, service.binary, customBasePath)
+                createTerminalUIInternal(endpoint.port, true, service.binary, customBasePath)
             }
             // Bounded readiness poll against `/api/info`; the ConnectionManager retries anyway.
             if (!awaitServiceReady(endpoint.host, endpoint.port, endpoint.password)) {
@@ -866,7 +866,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         return false
     }
 
-    private fun createTerminalUIInternal(h: String, p: Int, pwd: String?, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
+    private fun createTerminalUIInternal(p: Int, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
         activeBasePath = customBasePath
         val wd = customBasePath ?: project.basePath
@@ -1055,7 +1055,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         } else {
             // Terminal UI doesn't exist, need to create new terminal and start opencode
             try {
-                createTerminalUIInternal(hostname, port ?: return, password, false)
+                createTerminalUIInternal(port ?: return, false)
             } catch (e: Exception) {
                 logger.warn("[OpenCode] Failed to create terminal UI", e)
                 ApplicationManager.getApplication().invokeLater {
