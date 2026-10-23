@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.6"
+version = "1.3.7"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.7</h2>
+            <ul>
+                <li>Fix: the first OpenCode launch in an IDE session logged "This method is forbidden on EDT" (issue #3). On IntelliJ 2026.2 the terminal shell path (TerminalProjectOptionsProvider.getShellPath) blocks and may not be read on the Event Dispatch Thread; the plugin now resolves it on a background thread before typing the command into the terminal.</li>
+            </ul>
             <h2>1.3.6</h2>
             <ul>
                 <li>Fix: with several IDE windows open, the diff tab of a file change could appear in the wrong window. The opencode event stream is not filtered by its directory query parameter - every subscriber receives every directory's events - and the plugin dispatched all of them, so a window reacted to another project's session and opened its diff tab there (usually the focused window). Events are now filtered by their "location.directory" before they are dispatched.</li>

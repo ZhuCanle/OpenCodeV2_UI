@@ -9,7 +9,7 @@ This document provides strict guidelines and useful context for AI agents (and h
 - **Language**: Kotlin (JVM target 21)
 - **Build System**: Gradle (Kotlin DSL)
 - **Target Platform**: IntelliJ IDEA 2024.2+ (Since Build 242)
-- **Version**: 1.3.6+ (See `build.gradle.kts`)
+- **Version**: 1.3.7+ (See `build.gradle.kts`)
 
 ### Core Dependencies
 - **IntelliJ Platform SDK**: 2024.2.6 (the oldest supported IDE; the build compiles against it so
