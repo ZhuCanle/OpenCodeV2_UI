@@ -77,6 +77,21 @@ class OpenCodeService(private val project: Project) : Disposable {
         internal data class TurnOutcomeNotification(val title: String, val content: String, val warning: Boolean)
 
         /**
+         * Reads the terminal shell path, but only off the EDT.
+         *
+         * `TerminalProjectOptionsProvider.getShellPath()` blocks (`runBlockingMaybeCancellable`)
+         * since IntelliJ 2026.2 and throws "This method is forbidden on EDT" when called there, so
+         * the provider must never be touched on the dispatch thread (issue #3). A failed read is
+         * not fatal: `detectShell(null)` falls back to the form every shell accepts.
+         *
+         * @param onEdt whether the caller runs on the Event Dispatch Thread
+         * @param read the provider call; not invoked when [onEdt] is true
+         * @return the shell path, or null when it cannot be read safely
+         */
+        internal fun readShellPathSafely(onEdt: Boolean, read: () -> String?): String? =
+            if (onEdt) null else runCatching(read).getOrNull()
+
+        /**
          * Derives the turn-end notification from the outcome (pure; unit-testable).
          * `succeeded` keeps the familiar informational "Task Completed" message; every other outcome
          * produces a warning that names the outcome and, when present, the provider error.
@@ -865,8 +880,27 @@ class OpenCodeService(private val project: Project) : Disposable {
                 val cmd = command ?: getOpenCodeBinary()
                 // v2: no --hostname/--port; the TUI attaches to the background service itself.
                 // The command is typed into the user's shell, so the path form depends on that shell.
-                val shell = OpenCodeCommand.detectShell(TerminalProjectOptionsProvider.getInstance(project).shellPath)
-                w.executeCommand(OpenCodeCommand.tui(cmd, cont, shell)); pinTerminalTab(f)
+                // getShellPath() blocks since 2026.2, so it must not be read on this thread.
+                resolveShellPathAsync { shellPath ->
+                    w.executeCommand(OpenCodeCommand.tui(cmd, cont, OpenCodeCommand.detectShell(shellPath))); pinTerminalTab(f)
+                }
+            }
+        }
+    }
+
+    /**
+     * Resolves the terminal shell path on a worker thread and hands it back on the EDT.
+     *
+     * The provider call behind it (`TerminalProjectOptionsProvider.getShellPath`) runs
+     * `runBlockingMaybeCancellable`, which throws when invoked on the EDT (issue #3).
+     */
+    private fun resolveShellPathAsync(onResolved: (String?) -> Unit) {
+        AppExecutorUtil.getAppExecutorService().submit {
+            val shell = readShellPathSafely(ApplicationManager.getApplication().isDispatchThread) {
+                TerminalProjectOptionsProvider.getInstance(project).shellPath
+            }
+            ApplicationManager.getApplication().invokeLater {
+                if (!project.isDisposed) onResolved(shell)
             }
         }
     }
