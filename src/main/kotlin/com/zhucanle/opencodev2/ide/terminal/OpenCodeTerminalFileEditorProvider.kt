@@ -8,6 +8,7 @@ import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.components.service
 import com.zhucanle.opencodev2.ide.OpenCodeService
+import com.zhucanle.opencodev2.ide.util.ProjectScopedMap
 import com.intellij.openapi.vfs.VirtualFile
 import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import com.intellij.openapi.application.ApplicationManager
@@ -29,16 +30,17 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
     companion object {
         private val logger = Logger.getInstance(OpenCodeTerminalFileEditorProvider::class.java)
         
-        // Use ConcurrentHashMap to manage lifecycle manually (Strong References)
-        private val terminalWidgets = ConcurrentHashMap<OpenCodeTerminalVirtualFile, ShellTerminalWidget>()
+        // Widgets are owned by the project that created them: several projects share this process,
+        // and closing one window must never dispose another window's terminal.
+        private val terminalWidgets = ProjectScopedMap<Project, OpenCodeTerminalVirtualFile, ShellTerminalWidget>()
         
         // Track pending disposal tasks
         private val disposalTasks = ConcurrentHashMap<OpenCodeTerminalVirtualFile, ScheduledFuture<*>>()
         
-        fun registerWidget(file: OpenCodeTerminalVirtualFile, widget: ShellTerminalWidget) {
+        fun registerWidget(file: OpenCodeTerminalVirtualFile, widget: ShellTerminalWidget, project: Project) {
             logger.debug("Registering terminal widget for file: ${file.name}")
             cancelDisposal(file) // Cancel any pending disposal if re-registering
-            terminalWidgets[file] = widget
+            terminalWidgets.put(project, file, widget)
         }
         
         fun unregisterWidget(file: OpenCodeTerminalVirtualFile) {
@@ -102,7 +104,7 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
             }
         }
 
-        fun disposeWidget(file: OpenCodeTerminalVirtualFile, project: Project?) {
+        fun disposeWidget(file: OpenCodeTerminalVirtualFile, project: Project?, notifyService: Boolean = true) {
             // Remove from tasks map to keep it clean
             disposalTasks.remove(file)
             
@@ -116,25 +118,26 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
                 }
                 
                 // Notify service to clean up connection state if this was a timed disposal
-                if (project != null && !project.isDisposed) {
+                if (notifyService && project != null && !project.isDisposed) {
                     project.service<OpenCodeService>().onTerminalDisposed()
                 }
             }
         }
         
         /**
-         * Clear all registered widgets.
-         * MUST be called during plugin unload (Project dispose).
+         * Clears registered widgets.
+         *
+         * @param project when non-null, only that project's widgets are disposed; pass null to
+         *   clear every project (plugin unload).
          */
-        fun clearAll() {
-            logger.debug("Clearing all terminal widgets for dynamic plugin unload")
-            // Cancel all pending tasks
-            disposalTasks.values.forEach { it.cancel(false) }
-            disposalTasks.clear()
-            
-            // Dispose all widgets
-            terminalWidgets.keys.forEach { disposeWidget(it, null) }
-            terminalWidgets.clear()
+        fun clearAll(project: Project? = null) {
+            logger.debug("Clearing terminal widgets for ${project?.name ?: "all projects"}")
+            val doomed = project?.let { terminalWidgets.keysOf(it) } ?: terminalWidgets.keys()
+
+            // Cancel pending tasks first so a scheduled disposal cannot race the teardown.
+            doomed.forEach { disposalTasks.remove(it)?.cancel(false) }
+
+            doomed.forEach { disposeWidget(it, null, notifyService = false) }
         }
     }
 
@@ -149,7 +152,7 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
         // This handles the "Fast Move" scenario where createEditor is called before the task runs.
         cancelDisposal(file)
         
-        val widget = terminalWidgets[file]
+        val widget = terminalWidgets.get(file)
         
         if (widget == null) {
             // This happens when IDE restores a session but our plugin hasn't re-initialized the terminal yet.
