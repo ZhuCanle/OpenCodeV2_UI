@@ -14,6 +14,9 @@
 - **每个 `/api/*` 路由都需要 HTTP Basic 认证**（用户名固定 `opencode`，密码为服务生成）。缺失认证返回 `401`。
 - 除 `/api/info` 外，响应统一包裹在 `{data: ...}` 信封中；`/api/info` 直接返回裸对象。
 - SSE 事件通过 `GET /api/event?directory=` 订阅；v1 的 `/global/event` 已不再使用。
+  **注意：服务端不会按 `directory` 过滤事件流**——订阅者能收到所有目录的事件，每条事件自带
+  `location.directory`。插件必须在客户端按 `location.directory` 过滤，否则多开窗口时 A 项目的
+  会话事件会跑到 B 项目里（表现为 diff/改动 tab 弹到当前聚焦的窗口）。
 
 ---
 
@@ -76,6 +79,9 @@
 ---
 
 ## SSE 事件（`GET /api/event?directory=`）
+
+- 服务端**不按目录过滤**：`?directory=` 只影响订阅上下文，流里仍会出现其他目录的事件。
+- 事件信封的 `location.directory` 标明该事件属于哪个目录；客户端据此过滤（`PathUtil.sameDirectory`）。
 
 - 帧格式：`data: <裸 JSON 对象>`（没有 `event:` 行，载荷不再二次编码）；`: heartbeat` 等注释行忽略。
 - 事件信封除业务字段外，还可能带 `durable: {aggregateID, seq, version}` 等簿记字段（可忽略）。

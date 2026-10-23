@@ -19,6 +19,44 @@ object PathUtil {
         }
     }
 
+    /**
+     * True when [a] and [b] point at the same directory, ignoring separator style and, on Windows,
+     * casing. Symlinked paths are compared through their canonical form when both are absolute, so
+     * `/tmp/x` and `/private/tmp/x` match on macOS.
+     */
+    fun sameDirectory(a: String, b: String): Boolean = sameDirectory(a, b, isWindows())
+
+    /** [sameDirectory] with an explicit casing rule, so Windows behaviour is testable anywhere. */
+    internal fun sameDirectory(a: String, b: String, caseInsensitive: Boolean): Boolean {
+        val left = unifySeparators(a)
+        val right = unifySeparators(b)
+        // Fast path: the usual case is two identical path strings. Only a mismatch pays for the
+        // canonical lookup that resolves symlinks (e.g. /tmp -> /private/tmp on macOS).
+        if (left.equals(right, ignoreCase = caseInsensitive)) return true
+        val leftCanonical = canonicalize(left) ?: return false
+        val rightCanonical = canonicalize(right) ?: return false
+        return leftCanonical.equals(rightCanonical, ignoreCase = caseInsensitive)
+    }
+
+    /** Normalises separators and drops a trailing separator. */
+    private fun unifySeparators(path: String): String {
+        val separators = path.trim().replace('\\', '/')
+        return separators.trimEnd('/').ifEmpty { separators }
+    }
+
+    /** Canonical form of an absolute path, or null when [unified] is relative / cannot be resolved. */
+    private fun canonicalize(unified: String): String? = try {
+        val file = java.io.File(unified)
+        if (!file.isAbsolute) {
+            null
+        } else {
+            val canonical = file.canonicalPath.replace('\\', '/')
+            canonical.trimEnd('/').ifEmpty { canonical }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     private fun isWindows(): Boolean {
         val osName = System.getProperty("os.name", "").lowercase()
         return osName.contains("windows")

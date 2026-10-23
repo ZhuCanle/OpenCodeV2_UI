@@ -2,8 +2,10 @@ package com.zhucanle.opencodev2.ide.api
 
 import com.zhucanle.opencodev2.ide.api.models.OpenCodeEvent
 import com.zhucanle.opencodev2.ide.api.models.OpenCodeEventDeserializer
+import com.zhucanle.opencodev2.ide.util.PathUtil
 import com.zhucanle.opencodev2.ide.util.ServerAuth
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.concurrency.AppExecutorUtil
 import okhttp3.*
@@ -55,6 +57,29 @@ class SseEventListener(
             } catch (_: Exception) {
                 null
             }
+        }
+
+        /**
+         * True when the frame belongs to [directory].
+         *
+         * The server does **not** filter `/api/event` by its `directory` query parameter: every
+         * subscriber receives every directory's events, each tagged with `location.directory`.
+         * Frames without a usable location are kept — they cannot be attributed, and the decoder
+         * already drops the ones the plugin does not handle.
+         */
+        internal fun isScopedTo(payload: String, directory: String): Boolean {
+            val locationDirectory = try {
+                val root = JsonParser.parseString(payload)
+                if (!root.isJsonObject) return true
+                val location = root.asJsonObject.get("location")
+                if (location == null || !location.isJsonObject) return true
+                val dir = location.asJsonObject.get("directory")
+                if (dir == null || !dir.isJsonPrimitive) return true
+                dir.asString.takeIf { it.isNotBlank() }
+            } catch (_: Exception) {
+                return true
+            } ?: return true
+            return PathUtil.sameDirectory(locationDirectory, directory)
         }
     }
 
@@ -158,6 +183,10 @@ class SseEventListener(
     private fun parseAndDispatchEvent(json: String) {
         try {
             logger.debug("[SSE-Raw] $json")
+            if (!isScopedTo(json, projectPath)) {
+                logger.debug("[SSE] Ignoring event from another directory")
+                return
+            }
             val event = decodeFrame(json)
             if (event != null) onEvent(event)
         } catch (e: Exception) {
