@@ -40,7 +40,13 @@ class OpenCodeWebFileEditorProvider : FileEditorProvider, DumbAware {
 
             val task = AppExecutorUtil.getAppScheduledExecutorService().schedule({
                 ApplicationManager.getApplication().invokeLater {
-                    if (project.isDisposed) return@invokeLater
+                    if (project.isDisposed) {
+                        // The project is gone: drop the entry so this static map does not retain the
+                        // project (and the password inside the virtual file) until IDE shutdown.
+                        onCloseCallbacks.remove(file)
+                        disposalTasks.remove(file)
+                        return@invokeLater
+                    }
                     
                     val isStillOpen = FileEditorManager.getInstance(project).isFileOpen(file)
                     

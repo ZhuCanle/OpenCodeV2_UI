@@ -75,7 +75,9 @@
 
     <!-- File Editor Provider -->
     <fileEditorProvider implementation="com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalFileEditorProvider"/>
-    <fileEditorProvider implementation="com.zhucanle.opencodev2.ide.web.OpenCodeWebFileEditorProvider"/>
+    <!-- The web editor provider is contributed from opencode-web-support.xml, which is only loaded
+         when the JCEF module is present. Registering it here as well made the platform create two
+         editors (and therefore two JCEF browsers) for every web tab. -->
 
     <!-- Notifications -->
     <notificationGroup id="OpenCodeV2" displayType="BALLOON"/>
