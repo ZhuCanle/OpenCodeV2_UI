@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.4"
+version = "1.3.5"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,13 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.5</h2>
+            <ul>
+                <li>Fix: closing one IDE window no longer kills another window's terminal. Terminal widgets are registered in a process-wide registry, but project disposal cleared every project's widget, so closing one project window disposed the other window's terminal shell (the other window printed "zsh: warning: 1 jobs SIGHUPed" and its connection state pointed at a dead widget). Widgets are now tracked per owning project and disposal only tears down its own.</li>
+                <li>Fix: after the local background service restarted - usually on a different port - the connection manager kept retrying the stale endpoint and never recovered. The plugin now rediscovers the service with "opencode service status" (starting it when needed), and when the endpoint changed it rebuilds the API client, the SSE stream and the terminal against the new endpoint. Rediscovery is throttled, so a transient failure does not restart a working terminal.</li>
+                <li>Fix: the "Connection lost" dialog's Reconnect button did nothing; only the New branch had code. Reconnect now restarts the current mode, New opens the connect dialog, and the dialog is rearmed after a successful reconnect instead of appearing at most once per IDE session.</li>
+                <li>Fix: the working directory chosen in the connect dialog was lost when the terminal was restarted; it is now kept.</li>
+            </ul>
             <h2>1.3.4</h2>
             <ul>
                 <li>Fix: on Windows the opencode CLI is now resolved to a real executable (opencode.cmd or opencode.exe) instead of the bare name opencode. Java starts processes through CreateProcess, which only appends .exe to a bare name, so an install from Scoop or npm - where PATH leads with the extensionless POSIX launcher and the Windows entry point is opencode.cmd - was detected but could never be executed, and the local service stayed unavailable (issue #2). The CLI is now read from the "where opencode" output and the first .exe/.com/.cmd/.bat entry is used.</li>
