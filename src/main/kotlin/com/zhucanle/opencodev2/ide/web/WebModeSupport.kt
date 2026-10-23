@@ -54,9 +54,18 @@ object WebModeSupport {
         null
     }
 
-    /** True when [requestUrl] targets [targetOrigin] (exact origin or a path under it). */
-    fun isSameOrigin(requestUrl: String, targetOrigin: String): Boolean =
-        requestUrl == targetOrigin || requestUrl.startsWith("$targetOrigin/")
+    /**
+     * True when [requestUrl] targets [targetOrigin].
+     *
+     * Compares normalized origins instead of raw string prefixes: a prefix check accepted
+     * `http://127.0.0.1:40960/...` for the origin `http://127.0.0.1:4096` and ignored host casing
+     * and default ports.
+     */
+    fun isSameOrigin(requestUrl: String, targetOrigin: String): Boolean {
+        val requestOrigin = originOf(requestUrl) ?: return false
+        val target = originOf(targetOrigin) ?: targetOrigin
+        return requestOrigin.equals(target, ignoreCase = true)
+    }
 
     fun openWebTab(project: Project, host: String, port: Int, password: String? = null, onClose: () -> Unit): OpenCodeWebVirtualFile? {
         if (!isJcefSupported()) {
@@ -76,10 +85,17 @@ object WebModeSupport {
         OpenCodeWebFileEditorProvider.registerCallback(virtualFile, onClose)
 
         ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) {
+                // The tab will never open: drop the callback so it (and the password) does not stay
+                // in the provider's static map.
+                OpenCodeWebFileEditorProvider.unregisterCallback(virtualFile)
+                return@invokeLater
+            }
             logger.info("Opening web tab: $url")
             val editors = FileEditorManager.getInstance(project).openFile(virtualFile, true)
             logger.info("FileEditorManager returned ${editors.size} editors")
             if (editors.isEmpty()) {
+                OpenCodeWebFileEditorProvider.unregisterCallback(virtualFile)
                 Messages.showErrorDialog(project, "Failed to open Web Interface tab. No editor provider found.", "Error")
             }
             pinTab(project, virtualFile)
@@ -93,8 +109,8 @@ object WebModeSupport {
     fun unregisterCallback(file: OpenCodeWebVirtualFile) {
         try {
             OpenCodeWebFileEditorProvider.unregisterCallback(file)
-        } catch (e: Throwable) {
-            // ignore
+        } catch (e: Exception) {
+            logger.warn("Failed to unregister the web tab close callback for ${file.name}", e)
         }
     }
 

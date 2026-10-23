@@ -45,6 +45,16 @@ object OpenCodeServiceDiscovery {
 
     private val SERVICE_JSON_NAME = "service.json"
 
+    /** A discovery result is reused for this long so a burst of connect attempts stays single-flight. */
+    private const val DISCOVERY_CACHE_TTL_MS = 3_000L
+
+    private val discoveryLock = Any()
+
+    @Volatile
+    private var lastDiscovery: DiscoveryResult? = null
+
+    private data class DiscoveryResult(val binary: String, val endpoint: ServiceEndpoint?, val atMs: Long)
+
     /**
      * Extracts the first `host:port` pair of an HTTP(S) URL found in [output].
      * Returns null when no URL is present (e.g. the service is not running).
@@ -79,8 +89,7 @@ object OpenCodeServiceDiscovery {
      */
     private fun configDirCandidates(): List<File> {
         val dirs = mutableListOf(defaultConfigDir())
-        val osName = System.getProperty("os.name").orEmpty().lowercase()
-        if (osName.contains("win")) {
+        if (PathUtil.isWindows()) {
             val appData = System.getenv("APPDATA")
             if (!appData.isNullOrBlank()) {
                 dirs.add(File(appData, "opencode"))
@@ -134,8 +143,31 @@ object OpenCodeServiceDiscovery {
      * Discovers a running service: asks `<binary> service status` for its URL, starts it when
      * needed, then attaches the password from the config directory.
      * Returns null when no endpoint can be determined.
+     *
+     * The call is single-flight: concurrent callers (the shortcut, the connect dialog, a
+     * reconnect) serialize on one discovery, and the result is reused for
+     * [DISCOVERY_CACHE_TTL_MS]. Without that, two quick connect attempts could each run
+     * `service start` while the first one is still starting the service.
+     *
+     * Blocking (spawns the CLI): never call this on the EDT.
      */
-    fun discover(binary: String): ServiceEndpoint? {
+    fun discover(binary: String): ServiceEndpoint? = synchronized(discoveryLock) {
+        val cached = lastDiscovery
+        val now = System.currentTimeMillis()
+        if (cached != null && cached.binary == binary && now - cached.atMs <= DISCOVERY_CACHE_TTL_MS) {
+            return cached.endpoint
+        }
+        val endpoint = discoverUncached(binary)
+        lastDiscovery = DiscoveryResult(binary, endpoint, System.currentTimeMillis())
+        endpoint
+    }
+
+    /** Drops the cached discovery result (tests, and after the service is restarted by the user). */
+    internal fun clearCache() {
+        lastDiscovery = null
+    }
+
+    private fun discoverUncached(binary: String): ServiceEndpoint? {
         var parsed = parseServiceUrl(runServiceStatus(binary))
 
         if (parsed == null) {

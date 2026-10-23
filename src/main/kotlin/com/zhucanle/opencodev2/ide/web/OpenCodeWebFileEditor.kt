@@ -27,6 +27,7 @@ class OpenCodeWebFileEditor(
     private val logger = Logger.getInstance(OpenCodeWebFileEditor::class.java)
     private val browser: JBCefBrowser?
     private val mainPanel = JPanel(BorderLayout())
+    private val isDisposed = java.util.concurrent.atomic.AtomicBoolean(false)
 
     init {
         mainPanel.isFocusable = true
@@ -64,6 +65,27 @@ class OpenCodeWebFileEditor(
                 }
                 
                 b.jbCefClient.addRequestHandler(object : CefRequestHandlerAdapter() {
+                    // One handler instance for every request: a page load issues thousands of
+                    // requests and each used to allocate a fresh adapter.
+                    private val resourceHandler = object : CefResourceRequestHandlerAdapter() {
+                        override fun onBeforeResourceLoad(
+                            browser: CefBrowser?,
+                            frame: CefFrame?,
+                            request: CefRequest?
+                        ): Boolean {
+                            if (request != null && targetOrigin != null &&
+                                WebModeSupport.isSameOrigin(request.url, targetOrigin)
+                            ) {
+                                val headers = HashMap<String, String>()
+                                request.getHeaderMap(headers)
+                                headers["Authorization"] = authHeader
+                                request.setHeaderMap(headers)
+                                logger.debug("Injected Auth header for request: ${request.url}")
+                            }
+                            return false
+                        }
+                    }
+
                     override fun getResourceRequestHandler(
                         browser: CefBrowser?,
                         frame: CefFrame?,
@@ -72,27 +94,7 @@ class OpenCodeWebFileEditor(
                         isDownload: Boolean,
                         requestInitiator: String?,
                         disableDefaultHandling: BoolRef?
-                    ): CefResourceRequestHandler? {
-                        return object : CefResourceRequestHandlerAdapter() {
-                            override fun onBeforeResourceLoad(
-                                browser: CefBrowser?,
-                                frame: CefFrame?,
-                                request: CefRequest?
-                            ): Boolean {
-                                if (request != null && targetOrigin != null &&
-                                    WebModeSupport.isSameOrigin(request.url, targetOrigin)
-                                ) {
-                                    val headers = HashMap<String, String>()
-                                    request.getHeaderMap(headers)
-                                    headers["Authorization"] = authHeader
-                                    request.setHeaderMap(headers)
-                                    // Change to info so it's visible in logs for verification
-                                    logger.info("Injected Auth header for request: ${request.url}")
-                                }
-                                return false
-                            }
-                        }
-                    }
+                    ): CefResourceRequestHandler = resourceHandler
                 }, b.cefBrowser)
             }
             
@@ -167,7 +169,7 @@ class OpenCodeWebFileEditor(
 
     override fun isModified(): Boolean = false
 
-    override fun isValid(): Boolean = true
+    override fun isValid(): Boolean = !isDisposed.get() && !project.isDisposed
 
     override fun addPropertyChangeListener(listener: PropertyChangeListener) {}
 
@@ -178,6 +180,7 @@ class OpenCodeWebFileEditor(
     override fun getFile(): VirtualFile = file
 
     override fun dispose() {
+        isDisposed.set(true)
         OpenCodeWebFileEditorProvider.scheduleDisposalCheck(file, project)
     }
 }

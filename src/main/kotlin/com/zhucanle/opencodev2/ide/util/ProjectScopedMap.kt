@@ -10,6 +10,9 @@ import java.util.concurrent.ConcurrentHashMap
  * drop the entries registered by that owner, otherwise closing one project window kills the
  * terminals of every other project.
  *
+ * The owner is part of every lookup, so a stale key from another project can never resolve to
+ * another project's value.
+ *
  * @param P owner type, e.g. a project
  * @param K key type, e.g. a virtual file
  * @param V value type, e.g. a terminal widget
@@ -25,13 +28,30 @@ internal class ProjectScopedMap<P : Any, K : Any, V : Any> {
         entries[key] = Entry(owner, value)
     }
 
-    /** Returns the value registered for [key], or null when absent. */
-    fun get(key: K): V? = entries[key]?.value
+    /** Returns the value registered for [key] by [owner], or null when absent or owned by someone else. */
+    fun get(owner: P, key: K): V? = entries[key]?.takeIf { it.owner == owner }?.value
 
-    fun containsKey(key: K): Boolean = entries.containsKey(key)
+    /** True when [key] is registered by [owner]. */
+    fun containsKey(owner: P, key: K): Boolean = entries[key]?.owner == owner
 
-    /** Removes [key] and returns its value, or null when absent. */
-    fun remove(key: K): V? = entries.remove(key)?.value
+    /** Removes [key] when [owner] registered it, and returns its value. */
+    fun remove(owner: P, key: K): V? {
+        var removed: V? = null
+        // Atomic check-and-remove: a plain check followed by remove could delete an entry that
+        // another project registered for the same key in between.
+        entries.computeIfPresent(key) { _, entry ->
+            if (entry.owner == owner) {
+                removed = entry.value
+                null
+            } else {
+                entry
+            }
+        }
+        return removed
+    }
+
+    /** Removes [key] regardless of its owner; only for teardown paths that already lost the owner. */
+    fun removeAny(key: K): V? = entries.remove(key)?.value
 
     /** Every key owned by [owner]. */
     fun keysOf(owner: P): Set<K> = entries.entries

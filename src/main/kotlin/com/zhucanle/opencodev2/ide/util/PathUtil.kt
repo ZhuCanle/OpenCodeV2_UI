@@ -57,7 +57,8 @@ object PathUtil {
         null
     }
 
-    private fun isWindows(): Boolean {
+    /** True on Windows. Single OS check for the plugin (path handling, CLI discovery). */
+    fun isWindows(): Boolean {
         val osName = System.getProperty("os.name", "").lowercase()
         return osName.contains("windows")
     }
@@ -98,7 +99,9 @@ object PathUtil {
         val normalizedBase = ensureTrailingSlash(toSystemIndependentPath(basePath))
         val normalizedPath = toSystemIndependentPath(filePath)
 
-        return if (normalizedPath.startsWith(normalizedBase)) {
+        // Windows drive letters and path casing are case-insensitive, so a server-reported path may
+        // differ in case from the project base path and still be the same file.
+        return if (normalizedPath.startsWith(normalizedBase, ignoreCase = isWindows())) {
             normalizedPath.substring(normalizedBase.length)
         } else {
             normalizedPath

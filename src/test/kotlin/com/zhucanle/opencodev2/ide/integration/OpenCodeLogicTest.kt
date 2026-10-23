@@ -318,13 +318,13 @@ class TestSessionManager(project: Project) : SessionManager(project) {
 
     override fun createSystemLabel(name: String): Label? = null
 
-    override fun onTurnStart(): Boolean {
+    override fun onTurnStart(sessionId: String): Boolean {
         simulatedCreatedFiles.clear()
         simulatedVfsChangedFiles.clear()
         simulatedServerEditedFiles.clear()
         simulatedUserEditedFiles.clear()
         simulatedCapturedContent.clear()
-        val started = super.onTurnStart()
+        val started = super.onTurnStart(sessionId)
         if (started) turnStartCount.incrementAndGet()
         return started
     }
@@ -340,8 +340,8 @@ class TestSessionManager(project: Project) : SessionManager(project) {
         }
     }
 
-    override fun onTurnEnd(): com.zhucanle.opencodev2.ide.session.TurnSnapshot? {
-        val realSnapshot = super.onTurnEnd() ?: return null
+    override fun onTurnEnd(sessionId: String): com.zhucanle.opencodev2.ide.session.TurnSnapshot? {
+        val realSnapshot = super.onTurnEnd(sessionId) ?: return null
 
         // Merge simulated data into the snapshot so the pipeline sees a realistic turn.
         return realSnapshot.copy(

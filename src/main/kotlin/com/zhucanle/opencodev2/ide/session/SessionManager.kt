@@ -29,6 +29,7 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.annotations.VisibleForTesting
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Manages the diff state for a single AI "turn" (busy -> idle cycle).
@@ -43,48 +44,52 @@ open class SessionManager(private val project: Project) : Disposable {
     private val logger = Logger.getInstance(SessionManager::class.java)
 
     // ==================== Turn State ====================
-    
-    /** Monotonically increasing turn counter for isolation */
-    @Volatile
-    private var turnNumber = 0
-    
-    /** True while AI is actively working (between busy and idle) */
-    @Volatile
-    private var isBusy = false
-    
-    /** LocalHistory label created at turn start, used for reliable restore */
-    private var baselineLabel: Label? = null
-    
-    /** Files physically changed on VFS during this turn (AI + User) */
-    private var vfsChangedFiles = ConcurrentHashMap.newKeySet<String>()
-    
-    /** Files explicitly reported by Server as edited (via the `session.step.ended` SSE event) */
-    private var serverEditedFiles = ConcurrentHashMap.newKeySet<String>()
-    
-    /** Files created by OpenCode during this turn (relative paths) */
-    private var aiCreatedFiles = ConcurrentHashMap.newKeySet<String>()
-    
-    /** Files edited by user during this turn (relative paths) */
-    private val userEditedFiles = ConcurrentHashMap.newKeySet<String>()
-    
+
     /**
-     * Pre-emptively captured content of files BEFORE they are modified in this turn.
-     * Captured via VFS `beforeContentsChange` and `beforeFileDeletion` events.
-     * This provides the most reliable "Before" state, independent of Turn Start timing or LocalHistory latency.
-     * Key: Relative Path, Value: File Content
+     * One active AI turn.
+     *
+     * A project can run several opencode sessions at the same time (the terminal TUI and the web UI,
+     * for instance), so every turn owns its own change sets. Before, the state was global: the
+     * second `session.execution.started` was ignored and its diffs were folded into the first turn.
      */
-    private var capturedBeforeContent = ConcurrentHashMap<String, String>()
-    
+    private class TurnState(val number: Int, val label: Label?) {
+        val vfsChangedFiles = ConcurrentHashMap.newKeySet<String>()
+        val serverEditedFiles = ConcurrentHashMap.newKeySet<String>()
+        val aiCreatedFiles = ConcurrentHashMap.newKeySet<String>()
+        val userEditedFiles = ConcurrentHashMap.newKeySet<String>()
+        val capturedBeforeContent = ConcurrentHashMap<String, String>()
+
+        /** Known file contents at the start of this turn (the 'Before' baseline). */
+        @Volatile
+        var knownAtStart: Map<String, String> = emptyMap()
+    }
+
+    /** Monotonic counter shared by all sessions, so log lines stay unique. */
+    private val turnCounter = AtomicInteger(0)
+
+    /** Active turns, keyed by session id. */
+    private val turns = ConcurrentHashMap<String, TurnState>()
+
+    /**
+     * Files changed while no turn was active (the gap between two turns). They are synced into
+     * [lastKnownFileStates] at the next turn start, so the new turn's baseline includes them.
+     */
+    private val gapChangedFiles = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * VFS signals observed after a turn ended (typically the refresh the diff pipeline performs).
+     * They only serve as affinity hints for late diffs and are cleared at the next turn start.
+     */
+    private val lateVfsChangedFiles = ConcurrentHashMap.newKeySet<String>()
+    private val lateAiCreatedFiles = ConcurrentHashMap.newKeySet<String>()
+
     /** 
      * Cache of last known file content after a Reject operation.
      * Used as a reliable fallback for 'Before' content if LocalHistory fails/is empty 
      * and Server state is stale (e.g. Server thinks file is deleted).
      */
     private val lastKnownFileStates = ConcurrentHashMap<String, String>()
-    
-    /** Cache of known states at the START of the current turn */
-    private var startOfTurnKnownState = HashMap<String, String>()
-    
+
     // ==================== Pending Diffs ====================
     
     /** Pending diffs awaiting user action, keyed by relative file path */
@@ -94,13 +99,15 @@ open class SessionManager(private val project: Project) : Disposable {
     
     private val documentListener = object : DocumentListener {
         override fun documentChanged(event: DocumentEvent) {
-            if (!isBusy) return
+            if (turns.isEmpty()) return
             val cmd = CommandProcessor.getInstance().currentCommandName
             if (!cmd.isNullOrEmpty()) {
-                FileDocumentManager.getInstance().getFile(event.document)?.let {
-                    val relativePath = PathUtil.relativizeToProject(project, it.path)
-                    userEditedFiles.add(relativePath)
-                    logger.info("[Turn #$turnNumber] User edit detected: $relativePath")
+                FileDocumentManager.getInstance().getFile(event.document)?.let { file ->
+                    val relativePath = PathUtil.relativizeToProject(project, file.path)
+                    // A document change cannot be attributed to one session, so every active turn
+                    // records it; each turn then filters its own diffs against that signal.
+                    turns.values.forEach { it.userEditedFiles.add(relativePath) }
+                    logger.info("[Turn ${turnNumbers()}] User edit detected: $relativePath")
                 }
             }
         }
@@ -112,8 +119,12 @@ open class SessionManager(private val project: Project) : Disposable {
             // Record creation event - will be cross-checked with serverEditedFiles later
             // to determine if it's truly AI-created or user-created
             val relPath = PathUtil.relativizeToProject(project, event.file.path)
-            aiCreatedFiles.add(relPath)
-            logger.info("[Turn #$turnNumber] VFS fileCreated: $relPath")
+            if (turns.isEmpty()) {
+                lateAiCreatedFiles.add(relPath)
+            } else {
+                turns.values.forEach { it.aiCreatedFiles.add(relPath) }
+            }
+            logger.info("[Turn ${turnNumbers()}] VFS fileCreated: $relPath")
         }
         
         override fun beforeFileDeletion(event: VirtualFileEvent) {
@@ -130,44 +141,52 @@ open class SessionManager(private val project: Project) : Disposable {
         // fileCopied is rare for AI and caused compilation issues
     }
 
+    /** Log-friendly numbers of the active turns (`-` when idle). */
+    private fun turnNumbers(): String =
+        turns.values.map { it.number }.sorted().joinToString(",").ifEmpty { "-" }
+
     internal fun captureContentBeforeChange(file: VirtualFile?) {
         if (file == null || !file.isValid || file.isDirectory) return
         
         val relativePath = PathUtil.relativizeToProject(project, file.path)
-        
-        // Only capture if NOT already captured for this turn/gap cycle.
-        // We want the ORIGINAL state before the first modification in this cycle.
-        if (!capturedBeforeContent.containsKey(relativePath)) {
+
+        // Capture only for the turns that still need this file: we want the ORIGINAL state before
+        // the first modification in the turn. Captures outside a turn are discarded, exactly like
+        // the old "clear at turn start" behaviour.
+        val pendingTurns = turns.values.filter { !it.capturedBeforeContent.containsKey(relativePath) }
+        if (pendingTurns.isEmpty()) return
+
+        fun record(content: String) {
+            pendingTurns.forEach { it.capturedBeforeContent.putIfAbsent(relativePath, content) }
+        }
+
+        try {
+            // Try VFS first
+            val content = VfsUtil.loadText(file)
+            record(content)
+            logger.info("[Turn ${turnNumbers()}] Captured before content for: $relativePath (${content.length} chars)")
+        } catch (e: Exception) {
+            logger.warn("[Turn ${turnNumbers()}] VfsUtil load failed for $relativePath: ${e.message}. Trying java.io.File...")
+            // Fallback to java.io.File
             try {
-                // Try VFS first
-                val content = VfsUtil.loadText(file)
-                capturedBeforeContent.putIfAbsent(relativePath, content)
-                logger.info("[Turn #$turnNumber] Captured before content for: $relativePath (${content.length} chars)")
-            } catch (e: Exception) {
-                logger.warn("[Turn #$turnNumber] VfsUtil load failed for $relativePath: ${e.message}. Trying java.io.File...")
-                // Fallback to java.io.File
-                try {
-                    val ioFile = File(file.path)
-                    if (ioFile.exists()) {
-                        val content = ioFile.readText()
-                        capturedBeforeContent.putIfAbsent(relativePath, content)
-                        logger.info("[Turn #$turnNumber] Captured via java.io.File for: $relativePath")
+                val ioFile = File(file.path)
+                if (ioFile.exists()) {
+                    record(ioFile.readText())
+                    logger.info("[Turn ${turnNumbers()}] Captured via java.io.File for: $relativePath")
+                } else {
+                    logger.warn("[Turn ${turnNumbers()}] File not found on disk: $relativePath. Trying LocalHistory...")
+                    // Fallback to LocalHistory (Last known state provided by IDE)
+                    // This handles external deletions where VFS event comes after physical deletion.
+                    val bytes = LocalHistory.getInstance().getByteContent(file) { true }
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        record(String(bytes, Charsets.UTF_8))
+                        logger.info("[Turn ${turnNumbers()}] Captured via LocalHistory (Latest) for: $relativePath")
                     } else {
-                        logger.warn("[Turn #$turnNumber] File not found on disk: $relativePath. Trying LocalHistory...")
-                        // Fallback to LocalHistory (Last known state provided by IDE)
-                        // This handles external deletions where VFS event comes after physical deletion.
-                        val bytes = LocalHistory.getInstance().getByteContent(file) { true }
-                        if (bytes != null && bytes.isNotEmpty()) {
-                            val content = String(bytes, Charsets.UTF_8)
-                            capturedBeforeContent.putIfAbsent(relativePath, content)
-                            logger.info("[Turn #$turnNumber] Captured via LocalHistory (Latest) for: $relativePath")
-                        } else {
-                            logger.warn("[Turn #$turnNumber] LocalHistory lookup returned null or empty for $relativePath")
-                        }
+                        logger.warn("[Turn ${turnNumbers()}] LocalHistory lookup returned null or empty for $relativePath")
                     }
-                } catch (ioe: Exception) {
-                    logger.error("[Turn #$turnNumber] Failed to capture content for $relativePath", ioe)
                 }
+            } catch (ioe: Exception) {
+                logger.error("[Turn ${turnNumbers()}] Failed to capture content for $relativePath", ioe)
             }
         }
     }
@@ -175,138 +194,104 @@ open class SessionManager(private val project: Project) : Disposable {
     private fun onVfsChange(file: VirtualFile?) {
         if (file == null) return
         val relativePath = PathUtil.relativizeToProject(project, file.path)
-        // Always record change to the current set (which represents the 'active' or 'just finished' turn)
-        // This captures late events that arrive after Turn End but before Next Turn Start.
-        if (vfsChangedFiles.add(relativePath)) {
-            logger.info("[Turn #$turnNumber] Detected VFS change: $relativePath")
+        if (turns.isEmpty()) {
+            // Gap: remember it so the next turn's baseline includes the change.
+            if (gapChangedFiles.add(relativePath)) {
+                lateVfsChangedFiles.add(relativePath)
+                logger.info("[Turn -] Detected VFS change outside a turn: $relativePath")
+            }
+            return
+        }
+        turns.values.forEach { turn ->
+            if (turn.vfsChangedFiles.add(relativePath)) {
+                logger.info("[Turn #${turn.number}] Detected VFS change: $relativePath")
+            }
         }
     }
-
-    // ... init ...
 
     // ==================== Turn Lifecycle ====================
 
     /**
-     * Called when session becomes busy. Starts a new turn.
-     * @return true if a new turn was started (state was reset)
+     * Called when a session becomes busy. Starts a turn for [sessionId].
+     *
+     * @return true when a new turn was started; false when that session already has one running
      */
-    open fun onTurnStart(): Boolean {
-        if (isBusy) {
-            logger.info("[Turn #$turnNumber] onTurnStart: already busy, ignored")
+    open fun onTurnStart(sessionId: String): Boolean {
+        if (turns.containsKey(sessionId)) {
+            logger.info("[Session $sessionId] onTurnStart: already busy, ignored")
             return false
         }
-        
-        val prevTurn = turnNumber
-        val prevVfsChanged = vfsChangedFiles.toSet()
-        val prevServerEdited = serverEditedFiles.toSet()
-        val prevUserEdited = userEditedFiles.toSet()
-        val prevPending = pendingDiffs.keys.toSet()
-        
-        turnNumber++
-        isBusy = true
-        
-        // Gap State Synchronization:
-        // Before clearing vfsChangedFiles (which collected changes during the Gap),
-        // we must sync their current content to lastKnownFileStates.
-        // This ensures startOfTurnKnownState includes user edits made during the Gap.
-        if (vfsChangedFiles.isNotEmpty()) {
-            val gapChangedFiles = vfsChangedFiles.toList()
-            logger.info("[Turn #$turnNumber] Syncing ${gapChangedFiles.size} gap-changed files to known state")
-            updateKnownState(gapChangedFiles)
+
+        // Gap state synchronization: files changed while no turn was active become the baseline of
+        // the new turn (startOfTurnKnownState then includes user edits made during the gap).
+        if (gapChangedFiles.isNotEmpty()) {
+            val gap = gapChangedFiles.toList()
+            logger.info("Syncing ${gap.size} gap-changed files to known state")
+            updateKnownState(gap)
+            gapChangedFiles.removeAll(gap.toSet())
         }
-        
-        // STRICT TURN ISOLATION
-        // We clear ALL change sets at the start of a turn. 
-        // This prevents "Gap Events" (e.g. late VFS events from the previous turn's refresh)
-        // from polluting the new turn. We want a clean slate for the AI's new work.
-        userEditedFiles.clear()
-        vfsChangedFiles.clear()
-        serverEditedFiles.clear()
-        aiCreatedFiles.clear()
-        capturedBeforeContent.clear()
-        
-        // Capture known state at start of turn (baseline for this turn)
-        startOfTurnKnownState = HashMap(lastKnownFileStates)
-        
-        baselineLabel = createSystemLabel("OpenCode Turn #$turnNumber Start")
-        
-        logger.info("╔══════════════════════════════════════════════════════════════")
-        logger.info("║ [Turn #$turnNumber] STARTED")
-        logger.info("║ Previous turn #$prevTurn state:")
-        logger.info("║   vfsChangedFiles: ${if (prevVfsChanged.isEmpty()) "(empty)" else prevVfsChanged}")
-        logger.info("║   serverEditedFiles: ${if (prevServerEdited.isEmpty()) "(empty)" else prevServerEdited}")
-        logger.info("║   userEditedFiles: ${if (prevUserEdited.isEmpty()) "(empty)" else prevUserEdited}")
-        logger.info("║   pendingDiffs: ${if (prevPending.isEmpty()) "(empty)" else prevPending}")
-        logger.info("╚══════════════════════════════════════════════════════════════")
+        lateVfsChangedFiles.clear()
+        lateAiCreatedFiles.clear()
+
+        val number = turnCounter.incrementAndGet()
+        val state = TurnState(number, createSystemLabel("OpenCode Turn #$number Start"))
+        state.knownAtStart = HashMap(lastKnownFileStates)
+        turns[sessionId] = state
+
+        logger.info("[Turn #$number] STARTED (session $sessionId)")
         return true
     }
 
     /**
-     * Called when AI finishes working. Returns a snapshot of this turn's state.
-     * @return TurnSnapshot containing all state needed for diff processing, or null if not busy
+     * Called when a session finishes working. Returns the snapshot of that session's turn.
+     *
+     * @return the state needed for diff processing, or null when [sessionId] had no active turn
      */
-    open fun onTurnEnd(): TurnSnapshot? {
-        if (!isBusy) {
-            logger.warn("[Turn #$turnNumber] onTurnEnd: not busy, ignored")
+    open fun onTurnEnd(sessionId: String): TurnSnapshot? {
+        val state = turns.remove(sessionId)
+        if (state == null) {
+            logger.warn("[Session $sessionId] onTurnEnd: no active turn, ignored")
             return null
         }
-        
-        isBusy = false
-        
-        // Update lastKnownFileStates with current content of modified files.
-        // This serves as a memory snapshot for the NEXT turn to use as 'Before' state,
-        // especially crucial if the file is deleted in the next turn and LocalHistory fails.
-        val allModifiedFiles = vfsChangedFiles + serverEditedFiles + aiCreatedFiles
-        allModifiedFiles.forEach { relativePath ->
-            val absPath = PathUtil.resolveProjectPath(project, relativePath)
-            if (absPath != null) {
-                val file = File(absPath)
-                if (file.exists() && file.isFile) {
-                    try {
-                        lastKnownFileStates[relativePath] = file.readText()
-                        logger.info("[Turn #$turnNumber] Updated known state for $relativePath")
-                    } catch (e: Exception) {
-                        logger.warn("[Turn #$turnNumber] Failed to capture known state for $relativePath: ${e.message}")
-                    }
-                }
-            }
+
+        // Update lastKnownFileStates with the current content of the files this turn touched, so
+        // the NEXT turn can use it as its 'Before' state (especially after a deletion, where
+        // LocalHistory may have nothing).
+        (state.vfsChangedFiles + state.serverEditedFiles + state.aiCreatedFiles).forEach { relativePath ->
+            updateKnownState(listOf(relativePath))
         }
-        
-        // Create immutable snapshot of current turn state
+
         val snapshot = TurnSnapshot(
-            turnNumber = turnNumber,
-            vfsChangedFiles = vfsChangedFiles,
-            serverEditedFiles = serverEditedFiles,
-            aiCreatedFiles = aiCreatedFiles,
-            userEditedFiles = userEditedFiles.toSet(),
-            baselineLabel = baselineLabel,
-            knownFileStates = HashMap(startOfTurnKnownState), // Use Start-of-Turn state as 'Before' baseline
-            capturedBeforeContent = HashMap(capturedBeforeContent) // Snapshot the captured content
+            turnNumber = state.number,
+            vfsChangedFiles = state.vfsChangedFiles.toSet(),
+            serverEditedFiles = state.serverEditedFiles.toSet(),
+            aiCreatedFiles = state.aiCreatedFiles.toSet(),
+            userEditedFiles = state.userEditedFiles.toSet(),
+            baselineLabel = state.label,
+            knownFileStates = state.knownAtStart,
+            capturedBeforeContent = HashMap(state.capturedBeforeContent)
         )
-        
-        logger.info("╔══════════════════════════════════════════════════════════════")
-        logger.info("║ [Turn #$turnNumber] ENDED")
-        logger.info("║   vfsChangedFiles: ${if (snapshot.vfsChangedFiles.isEmpty()) "(empty)" else snapshot.vfsChangedFiles}")
-        logger.info("║   serverEditedFiles: ${if (snapshot.serverEditedFiles.isEmpty()) "(empty)" else snapshot.serverEditedFiles}")
-        logger.info("║   capturedBefore: ${snapshot.capturedBeforeContent.keys}")
-        logger.info("╚══════════════════════════════════════════════════════════════")
-        
-        // Rotate AI sets for the next interval (Gap + Next Turn).
-        vfsChangedFiles = ConcurrentHashMap.newKeySet()
-        serverEditedFiles = ConcurrentHashMap.newKeySet()
-        aiCreatedFiles = ConcurrentHashMap.newKeySet()
-        capturedBeforeContent = ConcurrentHashMap() // Rotate capture map
-        
+
+        logger.info(
+            "[Turn #${state.number}] ENDED (session $sessionId): " +
+                "vfs=${snapshot.vfsChangedFiles.size}, server=${snapshot.serverEditedFiles.size}, " +
+                "captured=${snapshot.capturedBeforeContent.size}"
+        )
         return snapshot
     }
 
     /**
      * Called when OpenCode edits a file (from the `session.step.ended` SSE event's `files[]`).
      */
-    fun onFileEdited(filePath: String) {
+    fun onFileEdited(sessionId: String, filePath: String) {
         val relativePath = PathUtil.relativizeToProject(project, filePath)
-        serverEditedFiles.add(relativePath)
-        logger.info("[Turn #$turnNumber] Server reported edit: $relativePath")
+        val state = turns[sessionId]
+        if (state == null) {
+            logger.debug("[Session $sessionId] Server reported an edit outside a turn: $relativePath")
+            return
+        }
+        state.serverEditedFiles.add(relativePath)
+        logger.info("[Turn #${state.number}] Server reported edit: $relativePath")
     }
 
     init {
@@ -657,19 +642,15 @@ open class SessionManager(private val project: Project) : Disposable {
         return snapshot.knownFileStates[relativePath]
     }
     
-    /** Live captured-before files (test seam; production reads the per-turn snapshot instead). */
-    @VisibleForTesting
-    fun getLiveCapturedFilePaths(): Set<String> {
-        return capturedBeforeContent.keys.toSet()
-    }
-    
-    fun getLiveVfsChangedFiles(): Set<String> {
-        return vfsChangedFiles.toSet()
-    }
-    
-    fun getLiveAiCreatedFiles(): Set<String> {
-        return aiCreatedFiles.toSet()
-    }
+    /**
+     * VFS changes seen after the last turn ended (late refresh hints).
+     *
+     * Production reads the per-turn snapshot for turn data; these sets only carry the signals that
+     * arrive once the turn is already closed.
+     */
+    fun getLiveVfsChangedFiles(): Set<String> = lateVfsChangedFiles.toSet()
+
+    fun getLiveAiCreatedFiles(): Set<String> = lateAiCreatedFiles.toSet()
     
     fun getKnownFilePaths(): Set<String> {
         return lastKnownFileStates.keys.toSet()
@@ -686,9 +667,9 @@ open class SessionManager(private val project: Project) : Disposable {
                         val content = file.readText()
                         // Ensure we store using the canonical relative path key
                         lastKnownFileStates[relativePath] = content
-                        logger.info("[Turn #$turnNumber] Updated known state (late refresh) for $relativePath")
+                        logger.info("[Turn ${turnNumbers()}] Updated known state (late refresh) for $relativePath")
                     } catch (e: Exception) {
-                        logger.warn("[Turn #$turnNumber] Failed to update known state for $relativePath: ${e.message}")
+                        logger.warn("[Turn ${turnNumbers()}] Failed to update known state for $relativePath: ${e.message}")
                     }
                 }
             }
@@ -888,30 +869,29 @@ open class SessionManager(private val project: Project) : Disposable {
 
     // ==================== Queries ====================
 
-    fun getCurrentTurnNumber(): Int = turnNumber
-    
     fun getDiffForFile(path: String): DiffEntry? {
         val relativePath = PathUtil.relativizeToProject(project, path)
         return pendingDiffs[relativePath]
     }
 
-    fun getAllDiffEntries(): List<DiffEntry> = pendingDiffs.values.toList()
-
-    fun hasPendingDiffs(): Boolean = pendingDiffs.isNotEmpty()
+    /**
+     * Every diff the user has not accepted or rejected yet, in a stable (path) order.
+     *
+     * The order matters: the diff viewer pages through this list by index, and a raw
+     * `ConcurrentHashMap` iteration order made "next" jump to an arbitrary entry.
+     */
+    fun getAllDiffEntries(): List<DiffEntry> = pendingDiffs.values.sortedBy { it.file }
 
     // ==================== Lifecycle ====================
 
     fun clear() {
-        isBusy = false
-        baselineLabel = null
-        vfsChangedFiles.clear()
-        serverEditedFiles.clear()
-        aiCreatedFiles.clear()
-        userEditedFiles.clear()
+        turns.clear()
+        gapChangedFiles.clear()
+        lateVfsChangedFiles.clear()
+        lateAiCreatedFiles.clear()
         pendingDiffs.clear()
         lastKnownFileStates.clear()
-        startOfTurnKnownState.clear()
-        capturedBeforeContent.clear()
+        turnCounter.set(0)
     }
 
     override fun dispose() {

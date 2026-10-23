@@ -1,6 +1,9 @@
 package com.zhucanle.opencodev2.ide.ui
 
+import com.intellij.credentialStore.CredentialAttributes
+import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.module.ModuleManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.project.guessModuleDir
@@ -70,20 +73,15 @@ class OpenCodeConnectDialog(
         val passwordLabel = JBLabel("Server password (remote only):")
         val basePathLabel = JBLabel("Custom base path (optional):")
 
-        // Load saved values
+        // Load saved values. The address is restored so a remote host does not have to be typed
+        // again; the port suggestion is only the fallback for a first run.
         val props = PropertiesComponent.getInstance()
-        // Always suggest a new available port by default
-        addressField.text = "127.0.0.1:$defaultPort"
-        
-        // Load saved password (Base64 encoded for basic obfuscation)
-        try {
-            val encodedPassword = props.getValue(PROP_LAST_PASSWORD, "")
-            if (encodedPassword.isNotBlank()) {
-                val decodedPassword = String(Base64.getDecoder().decode(encodedPassword))
-                passwordField.text = decodedPassword
-            }
-        } catch (e: Exception) {
-            // Ignore if password retrieval fails
+        addressField.text = props.getValue(PROP_LAST_ADDRESS, "").ifBlank { "127.0.0.1:$defaultPort" }
+
+        // The password lives in the IDE credential store, never in options/*.xml.
+        val savedPassword = loadSavedPassword() ?: migrateLegacyPassword(props)
+        if (!savedPassword.isNullOrBlank()) {
+            passwordField.text = savedPassword
         }
 
         // Load saved custom base path
@@ -154,18 +152,8 @@ class OpenCodeConnectDialog(
         val props = PropertiesComponent.getInstance()
         props.setValue(PROP_LAST_ADDRESS, "$hostname:$port")
 
-        // Save password (Base64 encoded for basic obfuscation)
-        try {
-            if (newPassword.isNullOrBlank()) {
-                // Clear saved password if empty
-                props.unsetValue(PROP_LAST_PASSWORD)
-            } else {
-                val encodedPassword = Base64.getEncoder().encodeToString(newPassword.toByteArray())
-                props.setValue(PROP_LAST_PASSWORD, encodedPassword)
-            }
-        } catch (e: Exception) {
-            // Ignore if password save fails
-        }
+        // Save the password in the credential store (cleared when the field is left empty).
+        savePassword(newPassword)
 
         // Save custom base path
         if (newBasePath.isNullOrBlank()) {
@@ -180,10 +168,52 @@ class OpenCodeConnectDialog(
     }
 
     companion object {
+        private val logger = Logger.getInstance(OpenCodeConnectDialog::class.java)
+
         private const val PROP_LAST_ADDRESS = "opencode.lastAddress"
-        private const val PROP_LAST_PASSWORD = "opencode.lastPassword"
+
+        /** Legacy location of the password: Base64 in the IDE options file. Migrated on first read. */
+        private const val PROP_LEGACY_PASSWORD = "opencode.lastPassword"
+
         private const val PROP_CUSTOM_BASE_PATH = "opencode.customBasePath"
         private const val PROP_USE_WEB = "opencode.useWebInterface"
+
+        /** Credential-store entry holding the last server password. */
+        private val passwordAttributes = CredentialAttributes("OpenCodeV2/serverPassword")
+
+        private fun loadSavedPassword(): String? = try {
+            PasswordSafe.instance.getPassword(passwordAttributes)
+        } catch (e: Exception) {
+            logger.warn("Could not read the saved OpenCode password", e)
+            null
+        }
+
+        private fun savePassword(password: String?) {
+            try {
+                PasswordSafe.instance.setPassword(passwordAttributes, password)
+            } catch (e: Exception) {
+                logger.warn("Could not store the OpenCode password", e)
+            }
+        }
+
+        /**
+         * Moves a password saved by an older plugin version out of the options file.
+         *
+         * @return the migrated password, or null when there is nothing to migrate
+         */
+        private fun migrateLegacyPassword(props: PropertiesComponent): String? {
+            val legacy = props.getValue(PROP_LEGACY_PASSWORD, "")
+            if (legacy.isBlank()) return null
+            props.unsetValue(PROP_LEGACY_PASSWORD)
+            val decoded = try {
+                String(Base64.getDecoder().decode(legacy))
+            } catch (e: Exception) {
+                logger.warn("Could not decode the legacy OpenCode password", e)
+                return null
+            }
+            savePassword(decoded)
+            return decoded
+        }
 
         /**
          * Hosts treated as "local". The v2 background service is service-managed: its endpoint and

@@ -5,6 +5,7 @@ import com.zhucanle.opencodev2.ide.api.models.OpenCodeEventDeserializer
 import com.zhucanle.opencodev2.ide.util.PathUtil
 import com.zhucanle.opencodev2.ide.util.ServerAuth
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonElement
 import com.google.gson.JsonParser
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.concurrency.AppExecutorUtil
@@ -59,6 +60,25 @@ class SseEventListener(
             }
         }
 
+        /** [decodeFrame] for an already parsed frame, so a frame is parsed only once. */
+        internal fun decodeFrame(frame: JsonElement?): OpenCodeEvent? =
+            if (frame == null) {
+                null
+            } else {
+                try {
+                    frameGson.fromJson(frame, OpenCodeEvent::class.java)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+
+        /** Parses a raw `data:` payload, or null when it is not valid JSON. */
+        internal fun parseFrame(payload: String): JsonElement? = try {
+            JsonParser.parseString(payload)
+        } catch (_: Exception) {
+            null
+        }
+
         /**
          * True when the frame belongs to [directory].
          *
@@ -67,11 +87,14 @@ class SseEventListener(
          * Frames without a usable location are kept — they cannot be attributed, and the decoder
          * already drops the ones the plugin does not handle.
          */
-        internal fun isScopedTo(payload: String, directory: String): Boolean {
+        internal fun isScopedTo(payload: String, directory: String): Boolean =
+            isScopedTo(parseFrame(payload), directory)
+
+        /** [isScopedTo] for an already parsed frame. */
+        internal fun isScopedTo(frame: JsonElement?, directory: String): Boolean {
             val locationDirectory = try {
-                val root = JsonParser.parseString(payload)
-                if (!root.isJsonObject) return true
-                val location = root.asJsonObject.get("location")
+                if (frame == null || !frame.isJsonObject) return true
+                val location = frame.asJsonObject.get("location")
                 if (location == null || !location.isJsonObject) return true
                 val dir = location.asJsonObject.get("directory")
                 if (dir == null || !dir.isJsonPrimitive) return true
@@ -117,6 +140,9 @@ class SseEventListener(
     }
 
     private fun doConnect() {
+        // A disconnect can race a scheduled reconnect: without this check the new call would be
+        // assigned after disconnect() cancelled the previous one, leaving a stream nobody owns.
+        if (!shouldReconnect.get()) return
         reconnectAttemptCount++
         val encodedPath = java.net.URLEncoder.encode(projectPath, "UTF-8")
         val url = "$baseUrl/api/event?directory=$encodedPath"
@@ -149,6 +175,13 @@ class SseEventListener(
                     return
                 }
 
+                // The call may have been cancelled (or the listener disconnected) while the
+                // handshake was in flight; consuming the stream then would leak it.
+                if (call.isCanceled() || !shouldReconnect.get()) {
+                    response.close()
+                    return
+                }
+
                 isConnected.set(true)
                 reconnectAttemptCount = 0
                 onConnected()
@@ -156,7 +189,7 @@ class SseEventListener(
 
                 response.body?.source()?.let { source ->
                     try {
-                        while (!source.exhausted() && !call.isCanceled()) {
+                        while (!source.exhausted() && !call.isCanceled() && shouldReconnect.get()) {
                             val line = source.readUtf8Line() ?: break
                             // Frames are either `data: <raw JSON object>` or `: heartbeat` comments;
                             // only the data lines carry an event.
@@ -183,11 +216,13 @@ class SseEventListener(
     private fun parseAndDispatchEvent(json: String) {
         try {
             logger.debug("[SSE-Raw] $json")
-            if (!isScopedTo(json, projectPath)) {
+            // Parse once: the scope check and the decoder used to parse the same frame separately.
+            val frame = parseFrame(json)
+            if (!isScopedTo(frame, projectPath)) {
                 logger.debug("[SSE] Ignoring event from another directory")
                 return
             }
-            val event = decodeFrame(json)
+            val event = decodeFrame(frame)
             if (event != null) onEvent(event)
         } catch (e: Exception) {
             logger.debug("[SSE] Parse error: ${e.message}. JSON: $json")
@@ -216,6 +251,4 @@ class SseEventListener(
         call?.cancel()
         isConnected.set(false)
     }
-
-    fun isConnected(): Boolean = isConnected.get()
 }

@@ -18,6 +18,11 @@ import java.util.concurrent.CountDownLatch
  */
 class RealProcessIntegrationTest : BasePlatformTestCase() {
 
+    private companion object {
+        /** Session id used for the turn bookkeeping; the pipeline is session-scoped. */
+        const val TEST_SESSION = "ses_test"
+    }
+
     // ==================== Tests ====================
 
     fun testAcceptAndReject() {
@@ -59,8 +64,8 @@ class RealProcessIntegrationTest : BasePlatformTestCase() {
         runCommand(projectDir, "git", "commit", "-m", "Initial commit")
 
         // 2. Start Turn (Captures LocalHistory label)
-        sm.onTurnStart()
-        sm.onFileEdited(relPath)
+        sm.onTurnStart(TEST_SESSION)
+        sm.onFileEdited(TEST_SESSION, relPath)
 
         // Simulate AI modifying the file content (On Disk + Refresh)
         com.intellij.openapi.application.runWriteAction {
@@ -68,7 +73,7 @@ class RealProcessIntegrationTest : BasePlatformTestCase() {
         }
 
         // 3. Create Snapshot and Process Diffs
-        val snapshot = sm.onTurnEnd() ?: throw AssertionError("onTurnEnd returned null")
+        val snapshot = sm.onTurnEnd(TEST_SESSION) ?: throw AssertionError("onTurnEnd returned null")
         val diffs = listOf(
             com.zhucanle.opencodev2.ide.api.models.FileDiff(
                 file = relPath,
@@ -151,14 +156,14 @@ class RealProcessIntegrationTest : BasePlatformTestCase() {
         runCommand(projectDir, "git", "commit", "-m", "Add empty file")
 
         // 2. AI Modifies it
-        sm.onTurnStart()
+        sm.onTurnStart(TEST_SESSION)
 
         com.intellij.openapi.application.runWriteAction {
             com.intellij.openapi.vfs.VfsUtil.saveText(vf, "AI Content")
         }
 
         // 3. Reject
-        val snapshot = checkNotNull(sm.onTurnEnd()) { "onTurnEnd returned null" }
+        val snapshot = checkNotNull(sm.onTurnEnd(TEST_SESSION)) { "onTurnEnd returned null" }
 
         // Verify that 'isCreatedExplicitly' is FALSE: `saveText` is a modification, not a creation.
         assertFalse("Should not be marked as created", snapshot.aiCreatedFiles.contains(relPath))

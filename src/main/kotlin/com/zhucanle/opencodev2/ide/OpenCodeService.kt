@@ -7,6 +7,7 @@ import com.zhucanle.opencodev2.ide.api.models.*
 import com.zhucanle.opencodev2.ide.diff.DiffViewerService
 import com.zhucanle.opencodev2.ide.session.SessionManager
 import com.zhucanle.opencodev2.ide.session.TurnSnapshot
+import com.zhucanle.opencodev2.ide.session.TurnTracker
 import com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalFileEditor
 import com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalFileEditorProvider
 import com.zhucanle.opencodev2.ide.terminal.OpenCodeTerminalLinkFilter
@@ -46,7 +47,6 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalView
 
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -196,16 +196,8 @@ class OpenCodeService(private val project: Project) : Disposable {
     private var terminalEditor: OpenCodeTerminalFileEditor? = null
     private var webVirtualFile: OpenCodeWebVirtualFile? = null
 
-    private val connectionListeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
     private var connectionManagerTask: ScheduledFuture<*>? = null
     @Volatile private var lastIdleNotification: Notification? = null
-    
-    // Turn state: keyed by sessionId
-    private val turnMessageIds = java.util.concurrent.ConcurrentHashMap<String, String>()
-    private val turnSnapshots = java.util.concurrent.ConcurrentHashMap<String, TurnSnapshot>()
-    private val turnIdleWaiting = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
-    private val turnBarrierTasks = java.util.concurrent.ConcurrentHashMap<String, ScheduledFuture<*>>()
-    private val turnLastTriggerTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     val sessionManager: SessionManager get() = _sessionManager ?: project.service()
     private val diffViewerService: DiffViewerService get() = _diffViewerService ?: project.service()
@@ -308,6 +300,8 @@ class OpenCodeService(private val project: Project) : Disposable {
      * opencode v2 removed `POST /tui/append-prompt`, so the reference is written to the terminal's
      * TTY instead. Returns false (so [schedulePasteAttempt] keeps retrying) while the terminal is
      * still starting up.
+     *
+     * Must not be called on the EDT: the TTY write blocks when the TUI is not reading its stdin.
      */
     fun pasteToTerminal(text: String): Boolean {
         if (text.isBlank()) return false
@@ -315,12 +309,6 @@ class OpenCodeService(private val project: Project) : Disposable {
         if (!written) logger.warn("[Paste] No terminal TTY accepted the reference: $text")
         return written
     }
-
-    fun addConnectionListener(listener: (Boolean) -> Unit) {
-        connectionListeners.add(listener); listener(isConnected.get())
-    }
-
-    fun removeConnectionListener(listener: (Boolean) -> Unit) { connectionListeners.remove(listener) }
 
     fun onTerminalDisposed() {
         if (isConnected.get() || port != null) {
@@ -331,29 +319,40 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     // ==================== Event Handling & Barrier ====================
 
+    /**
+     * Turn bookkeeping: waits for the assistant message id of a finished turn, then triggers the
+     * diff pipeline. Keyed by session id, so two sessions in one project never mix.
+     */
+    private val turnTracker = TurnTracker(
+        onDiffReady = { sessionId, snapshot -> fetchAndShowDiffs(sessionId, snapshot) },
+        debounceMs = { DEBOUNCE_MS },
+        barrierTimeoutMs = BARRIER_TIMEOUT_MS
+    )
+
     private fun handleEvent(event: OpenCodeEvent) {
         if (event !is UnknownEvent) logger.info("[OpenCode] SSE: ${event.type}")
         when (event) {
             // v2 turn start (`session.execution.started`): the real "busy" signal on the v2 wire.
             is SessionExecutionStartedEvent -> {
-                val sId = event.sessionID
-                val started = sessionManager.onTurnStart()
-                if (started) clearTurnState(sId)
+                val sessionId = event.sessionID
+                if (sessionManager.onTurnStart(sessionId)) {
+                    turnTracker.onExecutionStarted(sessionId)
+                }
             }
             // v2 turn end (`session.execution.succeeded|failed|interrupted`): any outcome ends the turn.
             is SessionExecutionEndedEvent -> handleTurnEnd(event.sessionID, event.outcome, event.errorMessage)
             // v2 step end (`session.step.ended`): carries the changed files and the assistant message id.
             is SessionStepEndedEvent -> {
-                val sId = event.sessionID
-                event.assistantMessageID?.let { recordTurnMessageId(sId, it) }
-                event.files.forEach { sessionManager.onFileEdited(it) }
+                val sessionId = event.sessionID
+                event.assistantMessageID?.let { turnTracker.onMessageId(sessionId, it) }
+                event.files.forEach { sessionManager.onFileEdited(sessionId, it) }
             }
             else -> {}
         }
     }
 
     /**
-     * Ends the current turn: captures the snapshot, notifies the user with the turn's outcome, and
+     * Ends the turn of [sessionId]: captures the snapshot, notifies the user with the outcome, and
      * arms the barrier so the diff pipeline runs as soon as the turn's message id (or the barrier
      * timeout) is available.
      *
@@ -361,14 +360,12 @@ class OpenCodeService(private val project: Project) : Disposable {
      * @param errorMessage provider error carried by `session.execution.failed`, when present
      */
     private fun handleTurnEnd(sessionId: String, outcome: String = "succeeded", errorMessage: String? = null) {
-        val snapshot = sessionManager.onTurnEnd()
+        val snapshot = sessionManager.onTurnEnd(sessionId)
         if (snapshot != null) {
-            turnSnapshots[sessionId] = snapshot
             logger.info("[OpenCode] Turn #${snapshot.turnNumber} snapshot captured (outcome=$outcome)")
             notifyTurnOutcome(outcome, errorMessage)
         }
-        turnIdleWaiting[sessionId] = true
-        attemptBarrierTrigger(sessionId)
+        turnTracker.onExecutionEnded(sessionId, snapshot)
     }
 
     /** Reports the turn result: an info notification on success, a warning otherwise. */
@@ -382,145 +379,77 @@ class OpenCodeService(private val project: Project) : Disposable {
         )
     }
 
-    private fun clearTurnState(sessionId: String) {
-        val oldSnapshot = turnSnapshots.remove(sessionId)
-        turnMessageIds.remove(sessionId)
-        turnIdleWaiting.remove(sessionId)
-        turnBarrierTasks.remove(sessionId)?.cancel(false)
-        turnLastTriggerTimes.remove(sessionId)
-        
-        if (oldSnapshot != null) {
-            logger.info("[OpenCode] Turn state cleared (was Turn #${oldSnapshot.turnNumber})")
-        } else {
-            logger.info("[OpenCode] Turn state cleared (no previous snapshot)")
-        }
-    }
-
-    private fun recordTurnMessageId(sessionId: String, messageId: String) {
-        if (turnMessageIds.containsKey(sessionId)) return
-        turnMessageIds[sessionId] = messageId
-        val turnNum = turnSnapshots[sessionId]?.turnNumber ?: sessionManager.getCurrentTurnNumber()
-        logger.info("[OpenCode] Turn #$turnNum MessageID: $messageId")
-        attemptBarrierTrigger(sessionId)
-    }
-
-    private fun attemptBarrierTrigger(sessionId: String) {
-        val ready = turnIdleWaiting[sessionId] == true
-        val hasId = turnMessageIds.containsKey(sessionId)
-        val snapshot = turnSnapshots[sessionId]
-
-        logger.debug("[OpenCode] Barrier check: ready=$ready, hasId=$hasId, hasSnapshot=${snapshot != null}")
-
-        if (ready && hasId) {
-            turnIdleWaiting[sessionId] = false
-            turnBarrierTasks.remove(sessionId)?.cancel(false)
-            if (snapshot != null) {
-                logger.info("[OpenCode] Turn #${snapshot.turnNumber} Barrier triggered → fetching diffs")
-                triggerDiffFetch(sessionId, snapshot)
-            } else {
-                logger.warn("[OpenCode] Barrier triggered but no snapshot available!")
-            }
-        } else if (ready) {
-            scheduleBarrierTimeout(sessionId)
-        }
-    }
-
-    private fun scheduleBarrierTimeout(sessionId: String) {
-        if (turnBarrierTasks.containsKey(sessionId)) return
-        val turnNum = turnSnapshots[sessionId]?.turnNumber ?: "?"
-        logger.debug("[OpenCode] Turn #$turnNum Barrier timeout scheduled (${BARRIER_TIMEOUT_MS}ms)")
-        val task = AppExecutorUtil.getAppScheduledExecutorService().schedule({
-            val snapshot = turnSnapshots[sessionId]
-            if (turnIdleWaiting[sessionId] == true && snapshot != null) {
-                logger.warn("[OpenCode] Turn #${snapshot.turnNumber} Barrier timeout → forcing diff fetch")
-                turnIdleWaiting[sessionId] = false
-                triggerDiffFetch(sessionId, snapshot)
-            }
-            turnBarrierTasks.remove(sessionId)
-        }, BARRIER_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-        turnBarrierTasks[sessionId] = task
-    }
-
-    private fun triggerDiffFetch(sessionId: String, snapshot: TurnSnapshot) {
-        val now = System.currentTimeMillis()
-        if (now - (turnLastTriggerTimes[sessionId] ?: 0) < DEBOUNCE_MS) {
-            logger.debug("[OpenCode] Turn #${snapshot.turnNumber} Debounced (too soon)")
-            return
-        }
-        turnLastTriggerTimes[sessionId] = now
-        fetchAndShowDiffs(sessionId, snapshot)
-    }
-
-    private fun forceVfsRefresh(diffs: List<FileDiff>) {
-        if (diffs.isEmpty()) return
+    /** Refreshes the VFS for [files] so late external edits (and deletions) become visible. */
+    private fun forceVfsRefresh(files: List<String>) {
+        if (files.isEmpty()) return
         try {
-            val files = diffs.mapNotNull { diff -> 
-                PathUtil.resolveProjectPath(project, diff.file)?.let { 
-                    val ioFile = java.io.File(it)
-                    // If file is deleted, we must refresh the parent directory to detect deletion
+            val ioFiles = files.mapNotNull { relativePath ->
+                PathUtil.resolveProjectPath(project, relativePath)?.let { absolutePath ->
+                    val ioFile = java.io.File(absolutePath)
+                    // A deleted file is not refreshable; refresh its parent so the deletion is seen.
                     if (!ioFile.exists()) ioFile.parentFile else ioFile
-                } 
+                }
             }
-            if (files.isNotEmpty()) {
-                logger.info("[OpenCode] Forcing VFS refresh for ${files.size} paths: ${files.map { it.absolutePath }}")
-                com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshIoFiles(files, false, false, null)
+            if (ioFiles.isNotEmpty()) {
+                logger.info("[OpenCode] Forcing VFS refresh for ${ioFiles.size} paths: ${ioFiles.map { it.absolutePath }}")
+                com.intellij.openapi.vfs.LocalFileSystem.getInstance().refreshIoFiles(ioFiles, false, false, null)
             }
         } catch (e: Exception) {
             logger.debug("[OpenCode] VFS refresh skipped: ${e.message}")
         }
     }
 
+    /**
+     * Fetches the turn's diffs and shows every still-pending entry.
+     *
+     * The v2 diff route returns the per-file changes of the newest user turn. Entries are resolved
+     * against the turn snapshot and the working tree; the viewer then shows **all** pending entries,
+     * not only this turn's. A new round used to close the previous diff tab while its entries were
+     * still acceptable, which hid them without resolving them.
+     */
     private fun fetchAndShowDiffs(sessionId: String, snapshot: TurnSnapshot) {
         val client = apiClient ?: return
         val path = project.basePath ?: return
-        val assistantMessageId = turnMessageIds[sessionId]
-
-        logger.info("[OpenCode] Turn #${snapshot.turnNumber} fetchAndShowDiffs: assistantMessageId=$assistantMessageId")
 
         AppExecutorUtil.getAppExecutorService().submit {
             try {
-                // The v2 diff route. `from` is omitted on purpose: it only accepts a
-                // *user* message id, and omitting it defaults to the newest user turn.
+                // The v2 diff route. `from` is omitted on purpose: it only accepts a *user* message
+                // id, and omitting it defaults to the newest user turn.
                 logger.info("[OpenCode] Turn #${snapshot.turnNumber} Fetching diffs for session $sessionId (newest user turn)")
                 val diffs = client.getSessionDiff(sessionId, path)
                 logger.info("[OpenCode] Turn #${snapshot.turnNumber} Server returned ${diffs.size} diffs: ${diffs.map { "${it.file}(+${it.additions}/-${it.deletions})" }}")
 
-                // 1. Force VFS refresh for Server files and Known files BEFORE processing
-                // This ensures we catch deletions of files that Server missed but AI previously touched.
-                // We rely on Server Authoritative logic: if Server missed a file and we have no history of it, we skip it.
-                val serverFiles = diffs.map { it.file }
-                val knownFiles = sessionManager.getKnownFilePaths()
-                val filesToRefresh = (serverFiles + knownFiles).distinct()
-                
-                if (filesToRefresh.isNotEmpty()) {
-                    // Create dummy FileDiffs just to pass the filename (v2 wires no before/after content)
-                    forceVfsRefresh(filesToRefresh.map { FileDiff(it, "", 0, 0, "modified") })
-                }
-                
-                // Capture any late VFS events triggered by the refresh
+                // 1. Refresh the VFS for server files and known files BEFORE processing: this
+                //    catches deletions the server missed but the AI touched in an earlier turn.
+                forceVfsRefresh((diffs.map { it.file } + sessionManager.getKnownFilePaths()).distinct())
+
+                // Capture any late VFS events triggered by the refresh.
                 val lateVfsEvents = sessionManager.getLiveVfsChangedFiles()
                 val lateAiCreatedFiles = sessionManager.getLiveAiCreatedFiles()
 
-                // Process using the snapshot via SessionManager (centralized logic)
-                // Pass late VFS events to help with affinity checks
+                // 2. Resolve this turn's entries (SessionManager owns the rescue/filter logic).
                 val entries = sessionManager.getProcessedDiffs(diffs, snapshot, lateVfsEvents, lateAiCreatedFiles)
-                
-                if (entries.isNotEmpty()) {
-                    sessionManager.updateKnownState(entries.map { it.file })
-                    
-                    logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${entries.size} diffs")
-                    invokeLater {
-                        if (!project.isDisposed) diffViewerService.showMultiFileDiff(entries)
-                    }
-                } else {
+                if (entries.isEmpty()) {
                     logger.info("[OpenCode] Turn #${snapshot.turnNumber} No diffs to show after processing.")
+                    return@submit
+                }
+
+                sessionManager.updateKnownState(entries.map { it.file })
+                val firstNewFile = entries.first().file
+                invokeLater {
+                    if (project.isDisposed) return@invokeLater
+                    // Show every pending entry so entries from earlier rounds stay reachable.
+                    val pending = sessionManager.getAllDiffEntries()
+                    val initialIndex = pending.indexOfFirst { it.file == firstNewFile }.coerceAtLeast(0)
+                    logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${pending.size} pending diffs (${entries.size} new)")
+                    diffViewerService.showMultiFileDiff(pending, initialIndex)
                 }
             } catch (e: Exception) {
                 logger.error("[OpenCode] Turn #${snapshot.turnNumber} Diff fetch error", e)
             }
         }
     }
-    
+
     // createSyntheticDiff removed - logic moved to SessionManager
 
 
@@ -696,7 +625,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         )
     }
 
-    private fun updateConnectionState(connected: Boolean) { if (isConnected.getAndSet(connected) != connected) connectionListeners.forEach { it(connected) } }
+    private fun updateConnectionState(connected: Boolean) { isConnected.set(connected) }
     private fun sendNotification(
         title: String,
         content: String,
@@ -733,28 +662,51 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun disconnectAndReset() {
         connectionManagerTask?.cancel(true); sseListener?.disconnect(); isConnected.set(false); isConnecting.set(false)
         reconnectPolicy.reset()
+        OpenCodeServiceDiscovery.clearCache()
         versionWarningShown = false
         authFailureNotified = false
-        turnMessageIds.clear(); turnSnapshots.clear(); turnIdleWaiting.clear(); turnBarrierTasks.values.forEach { it.cancel(false) }; turnBarrierTasks.clear()
-        turnLastTriggerTimes.clear()
+        turnTracker.clearAll()
         terminateProcess()
         terminalVirtualFile?.let { OpenCodeTerminalFileEditorProvider.disposeWidget(it, project, notifyService = false) }
-        terminalVirtualFile = null; terminalEditor = null; webVirtualFile = null; port = null; hostname = "127.0.0.1"; apiClient = null
+        terminalVirtualFile = null; terminalEditor = null; webVirtualFile = null; apiClient = null
+        // Reset every piece of connection state, not just the endpoint: leaving a stale password
+        // (and mode) behind made the state inconsistent and kept credentials in memory.
+        port = null; hostname = "127.0.0.1"; username = null; password = null; activeBasePath = null
     }
 
+    /**
+     * Kills the TUI child process of the terminal widget.
+     *
+     * `waitFor` blocks for up to two seconds, so it only runs off the EDT; on the EDT the forced
+     * kill is handed to a background thread instead of freezing the UI.
+     */
     private fun terminateProcess() {
         try {
             val process = terminalEditor?.terminalWidget?.processTtyConnector?.process
-            if (process?.isAlive == true) {
-                process.destroy()
-                if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
+            if (process?.isAlive != true) return
+            process.destroy()
+            if (ApplicationManager.getApplication().isDispatchThread) {
+                AppExecutorUtil.getAppExecutorService().execute {
+                    if (process.isAlive) process.destroyForcibly()
+                }
+            } else if (!process.waitFor(2, TimeUnit.SECONDS)) {
+                process.destroyForcibly()
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            logger.debug("[OpenCode] Could not terminate the terminal process: ${e.message}")
+        }
     }
 
     private fun showConnectionDialog() {
         AppExecutorUtil.getAppExecutorService().submit {
-            val suggested = PortFinder.findAvailablePort()
+            // findAvailablePort throws when the whole 4096..4195 range is taken; the dialog must
+            // still open, so fall back to the default port instead of aborting the task.
+            val suggested = try {
+                PortFinder.findAvailablePort()
+            } catch (e: java.io.IOException) {
+                logger.warn("[OpenCode] No free port found, suggesting 4096: ${e.message}")
+                4096
+            }
             ApplicationManager.getApplication().invokeLater {
                 OpenCodeConnectDialog.show(project, suggested)?.let { 
                     processConnectionChoice(it.hostname, it.port, it.password, it.useWebInterface, it.customBasePath) 
@@ -928,84 +880,51 @@ class OpenCodeService(private val project: Project) : Disposable {
         activeBasePath = customBasePath
         val wd = customBasePath ?: project.basePath
         val w = TerminalView.getInstance(project).createLocalShellWidget(wd, t)
-        OpenCodeTerminalLinkFilter.install(project, w)
+        // Relative `@path` links belong to the terminal's working directory, not always project.basePath.
+        OpenCodeTerminalLinkFilter.install(project, w, wd)
         val f = OpenCodeTerminalVirtualFile(t)
         terminalVirtualFile = f; OpenCodeTerminalFileEditorProvider.registerWidget(f, w, project)
         ApplicationManager.getApplication().invokeLater {
             terminalEditor = FileEditorManager.getInstance(project).openFile(f, true).firstOrNull { it is OpenCodeTerminalFileEditor } as? OpenCodeTerminalFileEditor
-            terminalEditor?.let { 
-                val cmd = command ?: getOpenCodeBinary()
+            terminalEditor?.let {
                 // v2: no --hostname/--port; the TUI attaches to the background service itself.
                 // The command is typed into the user's shell, so the path form depends on that shell.
-                // getShellPath() blocks since 2026.2, so it must not be read on this thread.
-                resolveShellPathAsync { shellPath ->
-                    w.executeCommand(OpenCodeCommand.tui(cmd, cont, OpenCodeCommand.detectShell(shellPath))); pinTerminalTab(f)
+                // Both the CLI lookup and getShellPath() must stay off the EDT (issue #3).
+                resolveTerminalLaunchAsync(command) { binary, shellPath ->
+                    w.executeCommand(OpenCodeCommand.tui(binary, cont, OpenCodeCommand.detectShell(shellPath)))
+                    pinTerminalTab(f)
                 }
             }
         }
     }
 
     /**
-     * Resolves the terminal shell path on a worker thread and hands it back on the EDT.
+     * Resolves what the terminal command needs — the CLI path and the shell family — on a worker
+     * thread, then hands both back on the EDT.
      *
-     * The provider call behind it (`TerminalProjectOptionsProvider.getShellPath`) runs
-     * `runBlockingMaybeCancellable`, which throws when invoked on the EDT (issue #3).
+     * `TerminalProjectOptionsProvider.getShellPath()` runs `runBlockingMaybeCancellable`, which
+     * throws when invoked on the EDT (issue #3), and the PATH lookup spawns `where`/`which`.
+     *
+     * @param command pre-resolved CLI path; when null the common install locations are scanned
      */
-    private fun resolveShellPathAsync(onResolved: (String?) -> Unit) {
+    private fun resolveTerminalLaunchAsync(command: String?, onResolved: (binary: String, shellPath: String?) -> Unit) {
         AppExecutorUtil.getAppExecutorService().submit {
+            val binary = command ?: getOpenCodeBinary()
             val shell = readShellPathSafely(ApplicationManager.getApplication().isDispatchThread) {
                 TerminalProjectOptionsProvider.getInstance(project).shellPath
             }
             ApplicationManager.getApplication().invokeLater {
-                if (!project.isDisposed) onResolved(shell)
+                if (!project.isDisposed) onResolved(binary, shell)
             }
         }
     }
 
     @Volatile private var _cachedBinary: String? = null
 
-    private fun getOpenCodeBinary(): String {
-        _cachedBinary?.let { return it }
-
-        // Fast check common paths (safe for EDT - no process execution)
+    /** Common install locations of the CLI, in priority order. */
+    private fun commonInstallCandidates(): List<java.io.File> {
         val home = System.getProperty("user.home")
-        val candidates = if (isWindows()) {
-            listOf(
-                java.io.File(home, ".opencode/bin/opencode.exe"),
-                java.io.File("C:\\Program Files\\opencode\\opencode.exe"),
-                java.io.File(System.getenv("LOCALAPPDATA") ?: "", "opencode\\opencode.exe"),
-            )
-        } else {
-            listOf(
-                java.io.File(home, ".opencode/bin/opencode"),
-                java.io.File("/opt/homebrew/bin/opencode"),
-                java.io.File("/usr/local/bin/opencode"),
-                java.io.File("/home/linuxbrew/.linuxbrew/bin/opencode"),
-                java.io.File(home, ".linuxbrew/bin/opencode"),
-                java.io.File("/usr/bin/opencode"),
-                java.io.File("/snap/bin/opencode"),
-            )
-        }
-        
-        for (candidate in candidates) {
-            if (candidate.exists() && candidate.canExecute()) {
-                val path = candidate.absolutePath
-                logger.info("[OpenCode] Resolved CLI to: $path")
-                _cachedBinary = path
-                return path
-            }
-        }
-
-        return "opencode"
-    }
-
-    /** Detect OpenCode binary path (Background thread safe) */
-    private fun detectOpenCodeBinary(): String? {
-        val home = System.getProperty("user.home")
-//        val exe = if (isWindows()) ".exe" else ""
-        
-        // Check common installation paths (ordered by priority)
-        val candidates = if (isWindows()) {
+        return if (PathUtil.isWindows()) {
             listOf(
                 java.io.File(home, ".opencode/bin/opencode.exe"),
                 java.io.File("C:\\Program Files\\opencode\\opencode.exe"),
@@ -1023,22 +942,36 @@ class OpenCodeService(private val project: Project) : Disposable {
                 java.io.File("/snap/bin/opencode"),                     // Snap install
             )
         }
-        
-        for (candidate in candidates) {
-            if (candidate.exists() && candidate.canExecute()) {
-                logger.info("[OpenCode] Detected CLI at: ${candidate.absolutePath}")
-                _cachedBinary = candidate.absolutePath
-                return candidate.absolutePath
-            }
-        }
+    }
 
+    /** Absolute path of the first installed CLI, or null when none of the known locations exists. */
+    private fun findInstalledBinary(): String? =
+        commonInstallCandidates().firstOrNull { it.exists() && it.canExecute() }?.absolutePath
+
+    /**
+     * CLI path for the terminal command. Only checks the known install locations (no process
+     * execution), so it stays cheap and safe on the EDT; falls back to the bare name.
+     */
+    private fun getOpenCodeBinary(): String = _cachedBinary ?: findInstalledBinary() ?: "opencode"
+
+    /**
+     * Full CLI detection: known install locations first, then a PATH lookup.
+     *
+     * The PATH lookup spawns `where`/`which`, so this must run on a worker thread.
+     */
+    private fun detectOpenCodeBinary(): String? {
+        _cachedBinary?.let { return it }
+        findInstalledBinary()?.let { path ->
+            logger.info("[OpenCode] Detected CLI at: $path")
+            _cachedBinary = path
+            return path
+        }
         // Fallback: look the CLI up in PATH (may fail in sandboxed environments like Snap)
         resolveCliFromPath()?.let { path ->
             logger.info("[OpenCode] CLI detected in PATH: $path")
             _cachedBinary = path
             return path
         }
-
         return null
     }
 
@@ -1052,7 +985,7 @@ class OpenCodeService(private val project: Project) : Disposable {
      * the name itself is a valid command.
      */
     private fun resolveCliFromPath(): String? {
-        if (isWindows()) {
+        if (PathUtil.isWindows()) {
             val whereOutput = runQuietly(listOf("cmd", "/c", "where", "opencode")) ?: return null
             return OpenCodeCliResolver.selectWindowsExecutable(whereOutput)
         }
@@ -1087,7 +1020,6 @@ class OpenCodeService(private val project: Project) : Disposable {
         }
     }
 
-    private fun isWindows() = System.getProperty("os.name", "").lowercase().contains("windows")
     private fun pinTerminalTab(f: VirtualFile) { try { FileEditorManagerEx.getInstanceEx(project).currentWindow?.setFilePinned(f, true) } catch (_: Exception) {} }
     private fun restartServer(m: ConnectionMode) { 
         val h = hostname; val p = port ?: return; val pwd = password; val basePath = activeBasePath
@@ -1107,7 +1039,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
     private fun ensureTerminalUi() { 
         val f = terminalVirtualFile
-        if (f != null && OpenCodeTerminalFileEditorProvider.hasWidget(f)) {
+        if (f != null && OpenCodeTerminalFileEditorProvider.hasWidget(project, f)) {
             focusTerminalUI()
         } else {
             // Terminal UI doesn't exist, need to create new terminal and start opencode
@@ -1143,21 +1075,24 @@ class OpenCodeService(private val project: Project) : Disposable {
             }
         }
     }
-    private fun schedulePasteAttempt(t: String, l: Int, d: Long) { 
-        if (l <= 0 || project.isDisposed) {
-            if (l <= 0 && !project.isDisposed) {
+    /**
+     * Retries [pasteToTerminal] until the terminal accepts the text.
+     *
+     * The write itself runs on the scheduled executor, never on the EDT: `TtyConnector.write` pushes
+     * bytes into the child process stdin and blocks when the TUI is not reading.
+     */
+    private fun schedulePasteAttempt(t: String, attemptsLeft: Int, delayMs: Long) {
+        if (attemptsLeft <= 0 || project.isDisposed) {
+            if (attemptsLeft <= 0 && !project.isDisposed) {
                 logger.warn("[Paste] All retries exhausted for: $t")
             }
             return
         }
-        AppExecutorUtil.getAppScheduledExecutorService().schedule({ 
-            ApplicationManager.getApplication().invokeLater { 
-                if (!project.isDisposed) {
-                    if (!pasteToTerminal(t)) {
-                        schedulePasteAttempt(t, l - 1, d)
-                    }
-                }
-            } 
-        }, d, TimeUnit.MILLISECONDS) 
+        AppExecutorUtil.getAppScheduledExecutorService().schedule({
+            if (project.isDisposed) return@schedule
+            if (!pasteToTerminal(t)) {
+                schedulePasteAttempt(t, attemptsLeft - 1, delayMs)
+            }
+        }, delayMs, TimeUnit.MILLISECONDS)
     }
 }

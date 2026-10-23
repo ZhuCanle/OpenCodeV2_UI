@@ -29,7 +29,13 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
 
     companion object {
         private val logger = Logger.getInstance(OpenCodeTerminalFileEditorProvider::class.java)
-        
+
+        /**
+         * Delay before a closed tab's widget is disposed. It absorbs the "tab move" case (close +
+         * reopen in another window/pane), which must not kill the running terminal.
+         */
+        private const val DISPOSAL_DELAY_MS = 5_000L
+
         // Widgets are owned by the project that created them: several projects share this process,
         // and closing one window must never dispose another window's terminal.
         private val terminalWidgets = ProjectScopedMap<Project, OpenCodeTerminalVirtualFile, ShellTerminalWidget>()
@@ -42,19 +48,13 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
             cancelDisposal(file) // Cancel any pending disposal if re-registering
             terminalWidgets.put(project, file, widget)
         }
-        
-        fun unregisterWidget(file: OpenCodeTerminalVirtualFile) {
-            logger.debug("Unregistering terminal widget for file: ${file.name}")
-            terminalWidgets.remove(file)
-            cancelDisposal(file)
-        }
 
-        fun hasWidget(file: OpenCodeTerminalVirtualFile): Boolean {
-            return terminalWidgets.containsKey(file)
+        fun hasWidget(project: Project, file: OpenCodeTerminalVirtualFile): Boolean {
+            return terminalWidgets.containsKey(project, file)
         }
 
         /**
-         * Schedule widget for disposal with a safety delay (5 seconds).
+         * Schedule widget for disposal after [DISPOSAL_DELAY_MS].
          * This handles the "Tab Move" scenario where a tab is closed and immediately re-opened.
          */
         fun scheduleDisposal(file: OpenCodeTerminalVirtualFile, project: Project) {
@@ -62,13 +62,16 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
             cancelDisposal(file)
             
             // Only schedule if we actually have a widget to dispose
-            if (!terminalWidgets.containsKey(file)) return
+            if (!terminalWidgets.containsKey(project, file)) return
 
-            logger.debug("Scheduling disposal check for ${file.name} in 60000ms")
+            logger.debug("Scheduling disposal check for ${file.name} in ${DISPOSAL_DELAY_MS}ms")
             
             val task = AppExecutorUtil.getAppScheduledExecutorService().schedule({
                 // Must run on EDT to check FileEditorManager status safely
                 ApplicationManager.getApplication().invokeLater {
+                    // Drop the completed task: the map must not retain a done future (and the
+                    // project/file it captured) until the next disposal.
+                    disposalTasks.remove(file)
                     if (project.isDisposed) return@invokeLater
                     
                     // CRITICAL CHECK: Is the file currently open?
@@ -85,7 +88,7 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
                         disposeWidget(file, project)
                     }
                 }
-            }, 60000, TimeUnit.MILLISECONDS)
+            }, DISPOSAL_DELAY_MS, TimeUnit.MILLISECONDS)
             
             disposalTasks[file] = task
         }
@@ -105,22 +108,26 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
         }
 
         fun disposeWidget(file: OpenCodeTerminalVirtualFile, project: Project?, notifyService: Boolean = true) {
-            // Remove from tasks map to keep it clean
+            // Remove from the registry first: the service notification below re-enters this method
+            // (disconnectAndReset), and the second call must find nothing to dispose.
             disposalTasks.remove(file)
             
-            val widget = terminalWidgets.remove(file)
-            if (widget != null) {
-                logger.debug("Disposing terminal widget for file: ${file.name}")
-                try {
-                    widget.dispose()
-                } catch (e: Exception) {
-                    logger.warn("Error disposing terminal widget", e)
-                }
-                
-                // Notify service to clean up connection state if this was a timed disposal
-                if (notifyService && project != null && !project.isDisposed) {
-                    project.service<OpenCodeService>().onTerminalDisposed()
-                }
+            val widget = if (project != null) terminalWidgets.remove(project, file) else terminalWidgets.removeAny(file)
+            if (widget == null) return
+
+            // Notify the service BEFORE disposing the widget: it resolves the TUI process through
+            // the editor's widget, which dispose() clears, and a missing process means the opencode
+            // child process is left running.
+            if (notifyService && project != null && !project.isDisposed) {
+                runCatching { project.service<OpenCodeService>().onTerminalDisposed() }
+                    .onFailure { logger.warn("Could not reset the OpenCode connection after terminal disposal", it) }
+            }
+
+            logger.debug("Disposing terminal widget for file: ${file.name}")
+            try {
+                widget.dispose()
+            } catch (e: Exception) {
+                logger.warn("Error disposing terminal widget", e)
             }
         }
         
@@ -137,7 +144,7 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
             // Cancel pending tasks first so a scheduled disposal cannot race the teardown.
             doomed.forEach { disposalTasks.remove(it)?.cancel(false) }
 
-            doomed.forEach { disposeWidget(it, null, notifyService = false) }
+            doomed.forEach { disposeWidget(it, project, notifyService = false) }
         }
     }
 
@@ -152,11 +159,11 @@ class OpenCodeTerminalFileEditorProvider : FileEditorProvider, DumbAware {
         // This handles the "Fast Move" scenario where createEditor is called before the task runs.
         cancelDisposal(file)
         
-        val widget = terminalWidgets.get(file)
+        val widget = terminalWidgets.get(project, file)
         
         if (widget == null) {
             // This happens when IDE restores a session but our plugin hasn't re-initialized the terminal yet.
-            // Or if the user closed the tab, waited >2s, and then re-opened it (new session needed).
+            // Or if the user closed the tab, waited longer than the disposal delay, and then re-opened it.
             logger.warn("Terminal widget not found for file: ${file.name} (creating placeholder or waiting for service)")
         } else {
             logger.debug("Creating terminal editor for existing widget: ${file.name}")

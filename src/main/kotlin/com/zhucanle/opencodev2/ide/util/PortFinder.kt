@@ -89,15 +89,19 @@ object PortFinder {
                 val encodedCredentials = java.util.Base64.getEncoder().encodeToString(credentials.toByteArray())
                 connection.setRequestProperty("Authorization", "Basic $encodedCredentials")
             }
-            
-            val responseCode = connection.responseCode
-            connection.disconnect()
-            
-            val isHealthy = responseCode == 200 || responseCode == 401 || responseCode == 403
-            if (!isHealthy) {
-                logger.debug("Health check failed for $hostname:$port. Response code: $responseCode")
+
+            try {
+                val responseCode = connection.responseCode
+                val isHealthy = responseCode == 200 || responseCode == 401 || responseCode == 403
+                if (!isHealthy) {
+                    logger.debug("Health check failed for $hostname:$port. Response code: $responseCode")
+                }
+                isHealthy
+            } finally {
+                // responseCode throws when the port is taken by a non-HTTP service; without the
+                // finally the socket would stay open until GC.
+                connection.disconnect()
             }
-            isHealthy
         } catch (e: Exception) {
             logger.debug("Health check failed for $hostname:$port. Error: ${e.message}")
             false
