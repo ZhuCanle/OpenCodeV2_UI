@@ -3,7 +3,6 @@ package com.zhucanle.opencodev2.ide.terminal
 import com.intellij.openapi.fileTypes.FileType
 import com.intellij.openapi.fileTypes.ex.FakeFileType
 import com.intellij.openapi.vfs.VirtualFile
-import com.intellij.openapi.vfs.VirtualFileSystem
 import com.intellij.testFramework.LightVirtualFile
 import java.util.UUID
 import javax.swing.Icon
