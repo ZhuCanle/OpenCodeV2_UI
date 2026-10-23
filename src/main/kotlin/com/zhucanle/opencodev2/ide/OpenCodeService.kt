@@ -22,11 +22,11 @@ import com.zhucanle.opencodev2.ide.util.ReconnectPolicy
 import com.zhucanle.opencodev2.ide.util.ServerAuth
 import com.zhucanle.opencodev2.ide.util.ServiceEndpoint
 import com.zhucanle.opencodev2.ide.web.OpenCodeWebVirtualFile
+import com.zhucanle.opencodev2.ide.web.OpenCodeWebFileEditorProvider
 import com.zhucanle.opencodev2.ide.web.WebModeSupport
 
 import com.intellij.execution.configurations.GeneralCommandLine
 import com.intellij.execution.process.CapturingProcessHandler
-import com.intellij.execution.process.OSProcessHandler
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -46,8 +46,6 @@ import com.intellij.util.concurrency.AppExecutorUtil
 import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalView
 
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -60,7 +58,48 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private enum class ConnectionMode { NONE, TERMINAL, WEB, REMOTE }
 
+    /** UI transition a launch request ([focusOrCreateTerminal]) must perform. */
+    internal enum class LaunchAction {
+        /** Connected and the tab is open: bring it to front. */
+        FOCUS_UI,
+
+        /** Nothing to do: the tab is already open and the request is not interactive. */
+        NO_OP,
+
+        /** Alive endpoint: offer to restore its UI or start over. */
+        ASK_RESTORE,
+
+        /** Dead endpoint: offer to restart the server or start over. */
+        ASK_RESTART,
+
+        /** Dead or alive, the remembered mode can be restored without asking. */
+        RESTORE_UI,
+
+        /** No usable endpoint: ask the user to connect. */
+        SHOW_CONNECT_DIALOG
+    }
+
     companion object {
+        /**
+         * Decides what a launch request does, given the state the liveness probe reported.
+         *
+         * Pure so it can be unit-tested: production evaluates it on the EDT after the blocking
+         * probe has run on a worker thread. `hasMode` keeps a remembered endpoint without a
+         * remembered mode (after [disconnectAndReset]) from being "restored" into nothing.
+         */
+        internal fun launchAction(
+            interactive: Boolean,
+            connected: Boolean,
+            uiOpen: Boolean,
+            hasEndpoint: Boolean,
+            hasMode: Boolean,
+            running: Boolean
+        ): LaunchAction = when {
+            connected && uiOpen -> if (interactive) LaunchAction.FOCUS_UI else LaunchAction.NO_OP
+            !hasEndpoint || !hasMode -> LaunchAction.SHOW_CONNECT_DIALOG
+            running -> if (interactive) LaunchAction.ASK_RESTORE else LaunchAction.RESTORE_UI
+            else -> if (interactive) LaunchAction.ASK_RESTART else LaunchAction.SHOW_CONNECT_DIALOG
+        }
         private const val OPEN_CODE_TAB_PREFIX = "OpenCode"
         private const val RETRY_INTERVAL_MS = 5000L
         private const val BARRIER_TIMEOUT_MS = 2000L
@@ -72,6 +111,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         internal var DEBOUNCE_MS = 1500L
         /** Hosts treated as "local": their endpoint is service-managed and never dialog-typed. */
         private val LOCAL_HOSTS = listOf("0.0.0.0", "127.0.0.1", "localhost")
+
 
         /** Title/content of the notification shown when a turn ends. */
         internal data class TurnOutcomeNotification(val title: String, val content: String, val warning: Boolean)
@@ -196,15 +236,30 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     fun focusOrCreateTerminal(interactive: Boolean = false) {
         val uiOpen = hasTerminalUI()
-        val running = port?.let { PortFinder.isOpenCodeRunningOnPort(it, hostname, username, password) } ?: false
-        if (isConnected.get() && !running) isConnected.set(false)
-        
-        when {
-            isConnected.get() && uiOpen -> if (interactive) focusTerminalUI()
-            interactive && port != null -> showReconnectOrNewDialog(running)
-            !interactive && running && port != null -> restoreUiForMode()
-            !interactive && !running && port != null -> showDisconnectedDialog(false)
-            else -> showConnectionDialog()
+        val endpoint = port ?: return showConnectionDialog()
+        // The liveness probe is a blocking HTTP request (5s connect + 5s read), so it must never
+        // run on the EDT; the decision table is evaluated back on the EDT once it returns.
+        AppExecutorUtil.getAppExecutorService().submit {
+            val running = PortFinder.isOpenCodeRunningOnPort(endpoint, hostname, username, password)
+            ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed) return@invokeLater
+                if (isConnected.get() && !running) isConnected.set(false)
+                when (launchAction(
+                    interactive = interactive,
+                    connected = isConnected.get(),
+                    uiOpen = uiOpen,
+                    hasEndpoint = true,
+                    hasMode = lastMode != ConnectionMode.NONE,
+                    running = running
+                )) {
+                    LaunchAction.FOCUS_UI -> focusTerminalUI()
+                    LaunchAction.NO_OP -> Unit
+                    LaunchAction.ASK_RESTORE -> showRestoreOrRestartDialog(running = true)
+                    LaunchAction.ASK_RESTART -> showRestoreOrRestartDialog(running = false)
+                    LaunchAction.RESTORE_UI -> restoreUiForMode()
+                    LaunchAction.SHOW_CONNECT_DIALOG -> showConnectionDialog()
+                }
+            }
         }
     }
 
@@ -216,22 +271,26 @@ class OpenCodeService(private val project: Project) : Disposable {
         return false
     }
     
-    private fun showDisconnectedDialog(interactive: Boolean) {
-        if (!interactive || lastMode == ConnectionMode.NONE) return
+    /**
+     * Asks whether to reuse the remembered endpoint ([running] = true) or restart the server
+     * ([running] = false). "New" drops the connection state and opens the connect dialog.
+     */
+    private fun showRestoreOrRestartDialog(running: Boolean) {
         ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) return@invokeLater
             val res = Messages.showYesNoCancelDialog(
                 project,
-                "Server at $hostname:$port not running. Restart?",
+                if (running) "Session active. Restore UI?" else "Server dead. Restart?",
                 "OpenCode",
-                "Restart",
+                if (running) "Restore" else "Restart",
                 "New",
                 "Cancel",
-                Messages.getWarningIcon()
+                if (running) Messages.getQuestionIcon() else Messages.getWarningIcon()
             )
-            if (res == Messages.YES) restartServer(lastMode)
-            else if (res == Messages.NO) {
-                disconnectAndReset()
-                showConnectionDialog()
+            when (res) {
+                Messages.YES -> if (running) restoreUiForMode() else restartServer(lastMode)
+                Messages.NO -> { disconnectAndReset(); showConnectionDialog() }
+                else -> Unit
             }
         }
     }
@@ -663,7 +722,13 @@ class OpenCodeService(private val project: Project) : Disposable {
         }
     }
 
-    override fun dispose() { disconnectAndReset(); OpenCodeTerminalFileEditorProvider.clearAll(project) }
+    override fun dispose() {
+        disconnectAndReset()
+        // Drop the web tab's close callback too: it captures this service (and therefore the
+        // project) and would otherwise stay in the provider's static map for the whole session.
+        webVirtualFile?.let { OpenCodeWebFileEditorProvider.unregisterCallback(it) }
+        OpenCodeTerminalFileEditorProvider.clearAll(project)
+    }
 
     private fun disconnectAndReset() {
         connectionManagerTask?.cancel(true); sseListener?.disconnect(); isConnected.set(false); isConnecting.set(false)
@@ -671,6 +736,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         versionWarningShown = false
         authFailureNotified = false
         turnMessageIds.clear(); turnSnapshots.clear(); turnIdleWaiting.clear(); turnBarrierTasks.values.forEach { it.cancel(false) }; turnBarrierTasks.clear()
+        turnLastTriggerTimes.clear()
         terminateProcess()
         terminalVirtualFile?.let { OpenCodeTerminalFileEditorProvider.disposeWidget(it, project, notifyService = false) }
         terminalVirtualFile = null; terminalEditor = null; webVirtualFile = null; port = null; hostname = "127.0.0.1"; apiClient = null
@@ -684,15 +750,6 @@ class OpenCodeService(private val project: Project) : Disposable {
                 if (!process.waitFor(2, TimeUnit.SECONDS)) process.destroyForcibly()
             }
         } catch (_: Exception) {}
-    }
-
-    private fun showReconnectOrNewDialog(running: Boolean) {
-        val msg = if (running) "Session active. Restore UI?" else "Server dead. Restart?"
-        ApplicationManager.getApplication().invokeLater {
-            val res = Messages.showYesNoCancelDialog(project, msg, "OpenCode", if (running) "Restore" else "Restart", "New", "Cancel", Messages.getQuestionIcon())
-            if (res == Messages.YES) if (running) restoreUiForMode() else restartServer(lastMode)
-            else if (res == Messages.NO) { disconnectAndReset(); showConnectionDialog() }
-        }
     }
 
     private fun showConnectionDialog() {
