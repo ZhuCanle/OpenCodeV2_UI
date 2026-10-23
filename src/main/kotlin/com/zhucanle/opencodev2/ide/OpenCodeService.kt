@@ -18,6 +18,7 @@ import com.zhucanle.opencodev2.ide.util.OpenCodeCommand
 import com.zhucanle.opencodev2.ide.util.OpenCodeServiceDiscovery
 import com.zhucanle.opencodev2.ide.util.PathUtil
 import com.zhucanle.opencodev2.ide.util.PortFinder
+import com.zhucanle.opencodev2.ide.util.ReconnectPolicy
 import com.zhucanle.opencodev2.ide.util.ServerAuth
 import com.zhucanle.opencodev2.ide.util.ServiceEndpoint
 import com.zhucanle.opencodev2.ide.web.OpenCodeWebVirtualFile
@@ -125,8 +126,12 @@ class OpenCodeService(private val project: Project) : Disposable {
     private val isConnecting = AtomicBoolean(false)
     private var lastMode: ConnectionMode = ConnectionMode.NONE
     private var wasEverConnected = false
-    private var remoteReconnectFailures = 0
-    private var remoteReconnectDialogShown = false
+    /** Decides retry / rediscover / ask-user after repeated health-check failures. */
+    private val reconnectPolicy = ReconnectPolicy()
+    /** Guards against overlapping service rediscovery attempts. */
+    private val rediscoveryInFlight = AtomicBoolean(false)
+    /** Working directory chosen in the connect dialog, reused when the terminal is restarted. */
+    private var activeBasePath: String? = null
     /** Guards the one-shot connect-time version-mismatch warning. */
     @Volatile private var versionWarningShown = false
     /** Guards the one-shot authentication-failure notification (connect probe + SSE handshake). */
@@ -478,7 +483,7 @@ class OpenCodeService(private val project: Project) : Disposable {
                     warnIfUnsupportedVersion(client)
                     when (client.probeAuth(basePath)) {
                         OpenCodeApiClient.AuthProbeResult.ACCEPTED -> {
-                            remoteReconnectFailures = 0
+                            reconnectPolicy.onConnected()
                             wasEverConnected = true
                             connectToSse()
                         }
@@ -524,13 +529,62 @@ class OpenCodeService(private val project: Project) : Disposable {
         )
     }
 
+    /**
+     * Failure sink for the connection manager. A local endpoint self-heals by rediscovering the
+     * service (which restarts it when needed); the user is only prompted once rediscovery can no
+     * longer make progress, and remote endpoints are never rediscovered.
+     */
     private fun handleConnectionFailure() {
         if (lastMode == ConnectionMode.NONE || !wasEverConnected) return
-        if (++remoteReconnectFailures >= 2 && !remoteReconnectDialogShown) { remoteReconnectDialogShown = true; showRemoteReconnectDialog() }
+        val local = lastMode != ConnectionMode.REMOTE
+        when (reconnectPolicy.onFailure(local, System.currentTimeMillis())) {
+            ReconnectPolicy.Action.RETRY -> Unit
+            ReconnectPolicy.Action.REDISCOVER -> rediscoverLocalServiceAsync()
+            ReconnectPolicy.Action.ASK_USER -> showRemoteReconnectDialog()
+        }
+    }
+
+    /**
+     * Asks the service CLI for the current endpoint on a worker thread and reconnects when it
+     * changed (a restarted daemon usually listens on a new port).
+     */
+    private fun rediscoverLocalServiceAsync() {
+        if (!rediscoveryInFlight.compareAndSet(false, true)) return
+        AppExecutorUtil.getAppExecutorService().submit {
+            try {
+                val endpoint = discoverLocalService()?.endpoint
+                if (endpoint == null) {
+                    logger.info("[OpenCode] Service rediscovery found no endpoint")
+                    return@submit
+                }
+                if (endpoint.host == hostname && endpoint.port == port) {
+                    // Same endpoint: the daemon is probably busy or restarting; keep retrying.
+                    return@submit
+                }
+                logger.info("[OpenCode] Service endpoint changed to ${endpoint.host}:${endpoint.port}, reconnecting")
+                ApplicationManager.getApplication().invokeLater {
+                    if (project.isDisposed || isConnected.get()) return@invokeLater
+                    reconnectPolicy.reset()
+                    restartServer(lastMode)
+                }
+            } catch (e: Exception) {
+                logger.warn("[OpenCode] Service rediscovery failed", e)
+            } finally {
+                rediscoveryInFlight.set(false)
+            }
+        }
     }
 
     private fun showRemoteReconnectDialog() {
-        ApplicationManager.getApplication().invokeLater { if (isConnected.get()) return@invokeLater; if (Messages.showYesNoCancelDialog(project, "Connection lost. Reconnect?", "OpenCode", "Reconnect", "New", "Cancel", Messages.getWarningIcon()) == Messages.NO) { disconnectAndReset(); showConnectionDialog() } }
+        ApplicationManager.getApplication().invokeLater {
+            if (isConnected.get()) return@invokeLater
+            if (lastMode == ConnectionMode.NONE) { disconnectAndReset(); showConnectionDialog(); return@invokeLater }
+            when (Messages.showYesNoCancelDialog(project, "Connection lost. Reconnect?", "OpenCode", "Reconnect", "New", "Cancel", Messages.getWarningIcon())) {
+                Messages.YES -> restartServer(lastMode)
+                Messages.NO -> { disconnectAndReset(); showConnectionDialog() }
+                else -> Unit
+            }
+        }
     }
 
     private fun connectToSse() {
@@ -598,6 +652,7 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun disconnectAndReset() {
         connectionManagerTask?.cancel(true); sseListener?.disconnect(); isConnected.set(false); isConnecting.set(false)
+        reconnectPolicy.reset()
         versionWarningShown = false
         authFailureNotified = false
         turnMessageIds.clear(); turnSnapshots.clear(); turnIdleWaiting.clear(); turnBarrierTasks.values.forEach { it.cancel(false) }; turnBarrierTasks.clear()
@@ -798,6 +853,7 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun createTerminalUIInternal(h: String, p: Int, pwd: String?, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
+        activeBasePath = customBasePath
         val wd = customBasePath ?: project.basePath
         val w = TerminalView.getInstance(project).createLocalShellWidget(wd, t)
         OpenCodeTerminalLinkFilter.install(project, w)
@@ -943,10 +999,11 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun isWindows() = System.getProperty("os.name", "").lowercase().contains("windows")
     private fun pinTerminalTab(f: VirtualFile) { try { FileEditorManagerEx.getInstanceEx(project).currentWindow?.setFilePinned(f, true) } catch (_: Exception) {} }
     private fun restartServer(m: ConnectionMode) { 
-        val h = hostname; val p = port ?: return; val pwd = password; disconnectAndReset(); hostname = h; port = p; password = pwd; lastMode = m; 
-        if (m == ConnectionMode.WEB) createWebTerminal(h, p, pwd) 
-        else if (m == ConnectionMode.REMOTE) connectToExistingServer(h, p, ServerAuth(password = pwd), false, false)
-        else createLocalTerminal(h, p, pwd) 
+        val h = hostname; val p = port ?: return; val pwd = password; val basePath = activeBasePath
+        disconnectAndReset(); hostname = h; port = p; password = pwd; lastMode = m; activeBasePath = basePath
+        if (m == ConnectionMode.WEB) createWebTerminal(h, p, pwd, basePath) 
+        else if (m == ConnectionMode.REMOTE) connectToExistingServer(h, p, ServerAuth(password = pwd), false, false, basePath)
+        else createLocalTerminal(h, p, pwd, basePath) 
     }
     private fun focusTerminalUI() { terminalVirtualFile?.let { FileEditorManager.getInstance(project).openFile(it, true) } ?: webVirtualFile?.let { FileEditorManager.getInstance(project).openFile(it, true) } }
     private fun restoreUiForMode() { 
