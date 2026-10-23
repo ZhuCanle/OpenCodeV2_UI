@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.5"
+version = "1.3.6"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.6</h2>
+            <ul>
+                <li>Fix: with several IDE windows open, the diff tab of a file change could appear in the wrong window. The opencode event stream is not filtered by its directory query parameter - every subscriber receives every directory's events - and the plugin dispatched all of them, so a window reacted to another project's session and opened its diff tab there (usually the focused window). Events are now filtered by their "location.directory" before they are dispatched.</li>
+            </ul>
             <h2>1.3.5</h2>
             <ul>
                 <li>Fix: closing one IDE window no longer kills another window's terminal. Terminal widgets are registered in a process-wide registry, but project disposal cleared every project's widget, so closing one project window disposed the other window's terminal shell (the other window printed "zsh: warning: 1 jobs SIGHUPed" and its connection state pointed at a dead widget). Widgets are now tracked per owning project and disposal only tears down its own.</li>
