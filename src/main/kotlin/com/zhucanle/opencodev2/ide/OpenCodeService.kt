@@ -111,8 +111,6 @@ class OpenCodeService(private val project: Project) : Disposable {
         private const val READINESS_ATTEMPTS = 10
         private const val READINESS_DELAY_MS = 300L
         internal var DEBOUNCE_MS = 1500L
-        /** Hosts treated as "local": their endpoint is service-managed and never dialog-typed. */
-        private val LOCAL_HOSTS = listOf("0.0.0.0", "127.0.0.1", "localhost")
 
 
         /** Title/content of the notification shown when a turn ends. */
@@ -153,24 +151,6 @@ class OpenCodeService(private val project: Project) : Disposable {
                     warning = true
                 )
             }
-
-        /**
-         * Resolves the credentials for a connection attempt.
-         *
-         * Local hosts are service-managed: their password always comes from the discovered v2
-         * service endpoint (via [OpenCodeServiceDiscovery]) and [dialogPassword] is ignored — a
-         * dialog-typed password must never authenticate against a local service. Remote hosts use
-         * the dialog-typed [dialogPassword].
-         *
-         * @param discover lazily resolves the local endpoint; only invoked for local hosts.
-         */
-        internal fun resolveConnectionAuth(
-            local: Boolean,
-            dialogPassword: String?,
-            discover: () -> ServiceEndpoint?
-        ): ServerAuth =
-            if (local) ServerAuth(password = discover()?.password)
-            else ServerAuth(password = dialogPassword)
     }
 
     private var hostname: String = "127.0.0.1"
@@ -779,66 +759,33 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
 
     private fun showConnectionDialog() {
-        AppExecutorUtil.getAppExecutorService().submit {
-            // findAvailablePort throws when the whole 4096..4195 range is taken; the dialog must
-            // still open, so fall back to the default port instead of aborting the task.
-            val suggested = try {
-                PortFinder.findAvailablePort()
-            } catch (e: java.io.IOException) {
-                logger.warn("[OpenCode] No free port found, suggesting 4096: ${e.message}")
-                4096
-            }
-            ApplicationManager.getApplication().invokeLater {
-                OpenCodeConnectDialog.show(project, suggested)?.let { 
-                    processConnectionChoice(it.hostname, it.port, it.password, it.useWebInterface, it.customBasePath) 
-                }
-            }
+        ApplicationManager.getApplication().invokeLater {
+            if (project.isDisposed) return@invokeLater
+            OpenCodeConnectDialog.show(project)?.let { processConnectionChoice(it) }
         }
     }
 
-    private fun processConnectionChoice(h: String, p: Int, pwd: String?, web: Boolean, customBasePath: String? = null) {
-        val safeH = h.trim().ifBlank { "127.0.0.1" }
-        val local = safeH in LOCAL_HOSTS
-
-        AppExecutorUtil.getAppExecutorService().submit {
-            val a = resolveConnectionAuth(local, pwd) { discoverLocalService()?.endpoint }
-            val running = if (local) PortFinder.isOpenCodeRunningOnPort(p, safeH, a.username, a.password) else true
-            val occupied = if (local && !running) !PortFinder.isPortAvailable(p) else false
-
-            ApplicationManager.getApplication().invokeLater {
-                if (running) {
-                    lastMode = if (!local) ConnectionMode.REMOTE else if (web) ConnectionMode.WEB else ConnectionMode.TERMINAL
-                    // For remote (!local), strict headless unless web mode.
-                    // For local, if running, we also just connect (headless or web), we do NOT spawn a new terminal.
-                    connectToExistingServer(safeH, p, a, web, web, customBasePath)
-                } else if (occupied) {
-                    val choice = Messages.showYesNoDialog(
-                        project,
-                        "Port $p is in use but did not pass the health check.\nIt might be an older OpenCode version or a different service.\n\nTry to connect anyway?",
-                        "Connection Warning",
-                        "Connect Anyway",
-                        "Cancel",
-                        Messages.getWarningIcon()
-                    )
-                    if (choice == Messages.YES) {
-                        lastMode = if (!local) ConnectionMode.REMOTE else if (web) ConnectionMode.WEB else ConnectionMode.TERMINAL
-                        connectToExistingServer(safeH, p, a, web, web, customBasePath)
-                    } else {
-                        showConnectionDialog()
-                    }
-                } else {
-                    // Not running and not occupied -> Start new server
-                    if (!local) {
-                         // Safety net: If remote host is not running, we cannot "start" it locally.
-                         Messages.showErrorDialog(project, "Cannot connect to remote server $safeH:$p (Not reachable).", "Connection Failed")
-                         showConnectionDialog()
-                    } else {
-                        lastMode = if (web) ConnectionMode.WEB else ConnectionMode.TERMINAL
-                        if (web) createWebTerminal(safeH, p, a.password, customBasePath) else createLocalTerminal(safeH, p, a.password, customBasePath)
-                    }
-                }
-            }
+    /**
+     * Routes the dialog result to the matching session start.
+     *
+     * A local session never uses the dialog's address or password: [startLocalSession] resolves
+     * the service-managed endpoint (and its password) through discovery, which is also why there is
+     * no port probe or "port in use" prompt any more. A remote session connects to the typed
+     * endpoint and, unless the web UI was requested, stays headless.
+     */
+    private fun processConnectionChoice(choice: OpenCodeConnectDialog.ConnectionInfo) {
+        if (choice.local) {
+            lastMode = if (choice.useWebInterface) ConnectionMode.WEB else ConnectionMode.TERMINAL
+            startLocalSession(web = choice.useWebInterface, customBasePath = choice.customBasePath)
+            return
         }
+
+        val host = choice.hostname.trim().ifBlank { "127.0.0.1" }
+        lastMode = ConnectionMode.REMOTE
+        connectToExistingServer(
+            host, choice.port, ServerAuth(password = choice.password),
+            choice.useWebInterface, choice.useWebInterface, choice.customBasePath
+        )
     }
 
     private fun connectToExistingServer(h: String, p: Int, a: ServerAuth, ui: Boolean, web: Boolean, customBasePath: String? = null) {
@@ -852,43 +799,17 @@ class OpenCodeService(private val project: Project) : Disposable {
         webVirtualFile = WebModeSupport.openWebTab(project, h, p, password) { if (webVirtualFile == null) terminateProcess() }
     }
 
-    private fun createWebTerminal(h: String, p: Int, pwd: String?, customBasePath: String? = null) {
-        AppExecutorUtil.getAppExecutorService().submit {
-            val bin = detectOpenCodeBinary()
-            if (bin == null) {
-                showCliNotFoundError()
-                return@submit
-            }
-            ApplicationManager.getApplication().invokeLater {
-                hostname = h; port = p; lastMode = ConnectionMode.WEB
-                createTerminalUIInternal(p, true, bin, customBasePath)
-            }
-            // Bounded readiness poll against `/api/info`; the ConnectionManager retries anyway.
-            if (!awaitServiceReady(h, p, pwd)) {
-                logger.warn("[OpenCode] Readiness poll (Web) timed out for $h:$p, starting ConnectionManager anyway")
-            }
-            
-            // Even if it timed out, we might still want the UI and the API client to try reconnecting
-            ApplicationManager.getApplication().invokeLater { createWebUI(h, p) }
-            initializeApiClient(h, p, pwd)
-            startConnectionManager()
-        }
-    }
-
     /**
-     * Starts the local TUI against the discovered v2 background service.
+     * Starts a local session (terminal TUI, or the web UI when [web] is true) against the
+     * discovered v2 background service.
      *
-     * The service port is service-managed, so the dialog's host/port/password are ignored for the
-     * local case: [OpenCodeServiceDiscovery.discover] resolves the endpoint (starting the service
-     * if needed) and the TUI attaches to it.
+     * The endpoint is service-managed, so nothing typed in the connect dialog is used:
+     * [OpenCodeServiceDiscovery.discover] resolves the host/port (starting the service when needed)
+     * and its password, and the UI is built against that endpoint. Both UI variants therefore share
+     * one code path; the web mode used to take the dialog's port, which pointed the web tab at a
+     * port the daemon might not be listening on.
      */
-    private fun createLocalTerminal(h: String, p: Int, pwd: String?, customBasePath: String? = null) {
-        val safeH = h.trim().ifBlank { "127.0.0.1" }
-        if (safeH !in LOCAL_HOSTS) {
-            // Guard: Never attempt to spawn local terminal for remote host
-            connectToExistingServer(safeH, p, ServerAuth(password = pwd), false, false, customBasePath)
-            return
-        }
+    private fun startLocalSession(web: Boolean, customBasePath: String?) {
         AppExecutorUtil.getAppExecutorService().submit {
             val service = discoverLocalService()
             if (service == null) {
@@ -901,16 +822,18 @@ class OpenCodeService(private val project: Project) : Disposable {
                 return@submit
             }
             ApplicationManager.getApplication().invokeLater {
+                if (project.isDisposed) return@invokeLater
                 hostname = endpoint.host; port = endpoint.port; password = endpoint.password
                 username = ServerAuth.DEFAULT_USERNAME
-                lastMode = ConnectionMode.TERMINAL
+                lastMode = if (web) ConnectionMode.WEB else ConnectionMode.TERMINAL
                 createTerminalUIInternal(endpoint.port, true, service.binary, customBasePath)
+                if (web) createWebUI(endpoint.host, endpoint.port)
             }
             // Bounded readiness poll against `/api/info`; the ConnectionManager retries anyway.
             if (!awaitServiceReady(endpoint.host, endpoint.port, endpoint.password)) {
                 logger.warn("[OpenCode] Readiness poll timed out for ${endpoint.host}:${endpoint.port}, starting ConnectionManager anyway")
             }
-            
+
             initializeApiClient(endpoint.host, endpoint.port, endpoint.password)
             startConnectionManager()
         }
@@ -1106,12 +1029,15 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
 
     private fun pinTerminalTab(f: VirtualFile) { try { FileEditorManagerEx.getInstanceEx(project).currentWindow?.setFilePinned(f, true) } catch (_: Exception) {} }
-    private fun restartServer(m: ConnectionMode) { 
+    private fun restartServer(m: ConnectionMode) {
         val h = hostname; val p = port ?: return; val pwd = password; val basePath = activeBasePath
         disconnectAndReset(); hostname = h; port = p; password = pwd; lastMode = m; activeBasePath = basePath
-        if (m == ConnectionMode.WEB) createWebTerminal(h, p, pwd, basePath) 
-        else if (m == ConnectionMode.REMOTE) connectToExistingServer(h, p, ServerAuth(password = pwd), false, false, basePath)
-        else createLocalTerminal(h, p, pwd, basePath) 
+        when (m) {
+            ConnectionMode.REMOTE -> connectToExistingServer(h, p, ServerAuth(password = pwd), false, false, basePath)
+            // Local modes re-discover the endpoint instead of reusing the one captured above.
+            ConnectionMode.WEB -> startLocalSession(web = true, customBasePath = basePath)
+            else -> startLocalSession(web = false, customBasePath = basePath)
+        }
     }
     private fun focusTerminalUI() { terminalVirtualFile?.let { FileEditorManager.getInstance(project).openFile(it, true) } ?: webVirtualFile?.let { FileEditorManager.getInstance(project).openFile(it, true) } }
     private fun restoreUiForMode() { 

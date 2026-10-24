@@ -7,50 +7,52 @@ import org.junit.Test
 /**
  * Unit tests for the pure connection validator extracted from [OpenCodeConnectDialog.doValidate].
  *
- * opencode v2 serves the API behind HTTP Basic auth. Local hosts run the service-managed background
- * service whose password is auto-discovered from `service.json`, so a blank password must be
- * accepted for them; remote hosts authenticate with the password printed by `opencode serve` and
- * therefore require a non-blank value. The validator is deliberately free of Swing/EDT state so it
- * can be exercised in a plain unit test.
+ * The dialog is local-first: a local session talks to the service-managed background daemon, whose
+ * endpoint and password come from `service.json` via discovery, so nothing typed in the dialog is
+ * authoritative and no field is required. A remote session authenticates with the password printed
+ * by `opencode serve` and therefore needs a valid `host:port` and a non-blank password. The
+ * validator is deliberately free of Swing/EDT state so it can be exercised in a plain unit test.
  */
 class ConnectDialogValidationTest {
 
     @Test
-    fun blankPasswordIsRejectedForRemoteHost() {
-        val info = OpenCodeConnectDialog.validateConnection("10.0.0.5:49374", "")
-        assertNotNull("A blank password must produce a validation error for a remote host", info)
+    fun localSessionNeedsNoInput() {
+        assertNull(OpenCodeConnectDialog.validateConnection(local = true, host = "", password = ""))
+        assertNull(
+            OpenCodeConnectDialog.validateConnection(local = true, host = "not-an-address", password = "  ")
+        )
+        assertNull(
+            OpenCodeConnectDialog.validateConnection(local = true, host = "10.0.0.5:49374", password = "")
+        )
     }
 
     @Test
-    fun whitespaceOnlyPasswordIsRejectedForRemoteHost() {
-        val info = OpenCodeConnectDialog.validateConnection("10.0.0.5:49374", "   ")
-        assertNotNull("A whitespace-only password must produce a validation error for a remote host", info)
+    fun blankPasswordIsRejectedForRemoteSession() {
+        val info = OpenCodeConnectDialog.validateConnection(local = false, host = "10.0.0.5:49374", password = "")
+        assertNotNull("A blank password must produce a validation error for a remote session", info)
     }
 
     @Test
-    fun blankPasswordIsAcceptedForLocalHosts() {
-        assertNull(OpenCodeConnectDialog.validateConnection("127.0.0.1:49374", ""))
-        assertNull(OpenCodeConnectDialog.validateConnection("localhost:49374", ""))
-        assertNull(OpenCodeConnectDialog.validateConnection("0.0.0.0:49374", ""))
+    fun whitespaceOnlyPasswordIsRejectedForRemoteSession() {
+        val info = OpenCodeConnectDialog.validateConnection(local = false, host = "10.0.0.5:49374", password = "   ")
+        assertNotNull("A whitespace-only password must produce a validation error for a remote session", info)
     }
 
     @Test
-    fun blankPasswordIsAcceptedForLocalHostRegardlessOfCase() {
-        assertNull(OpenCodeConnectDialog.validateConnection("LocalHost:49374", "   "))
+    fun validRemoteInputIsAccepted() {
+        assertNull(
+            OpenCodeConnectDialog.validateConnection(local = false, host = "127.0.0.1:49374", password = "s3cret")
+        )
+        assertNull(
+            OpenCodeConnectDialog.validateConnection(local = false, host = "10.0.0.5:49374", password = "s3cret")
+        )
     }
 
     @Test
-    fun nonBlankPasswordWithValidAddressIsAccepted() {
-        assertNull(OpenCodeConnectDialog.validateConnection("127.0.0.1:49374", "s3cret"))
-        assertNull(OpenCodeConnectDialog.validateConnection("10.0.0.5:49374", "s3cret"))
-    }
-
-    @Test
-    fun malformedAddressIsStillRejected() {
-        assertNotNull(OpenCodeConnectDialog.validateConnection("", ""))
-        assertNotNull(OpenCodeConnectDialog.validateConnection("no-port-here", ""))
-        assertNotNull(OpenCodeConnectDialog.validateConnection(":49374", ""))
-        assertNotNull(OpenCodeConnectDialog.validateConnection("127.0.0.1:0", ""))
-        assertNotNull(OpenCodeConnectDialog.validateConnection("127.0.0.1:99999", ""))
+    fun malformedAddressIsRejectedForRemoteSession() {
+        for (host in listOf("", "no-port-here", ":49374", "127.0.0.1:0", "127.0.0.1:99999")) {
+            val info = OpenCodeConnectDialog.validateConnection(local = false, host = host, password = "s3cret")
+            assertNotNull("Address '$host' must be rejected for a remote session", info)
+        }
     }
 }

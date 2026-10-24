@@ -13,25 +13,31 @@ import com.intellij.openapi.ui.ValidationInfo
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
+import com.intellij.util.ui.FormBuilder
 import com.intellij.util.ui.JBUI
-import java.awt.BorderLayout
-import java.awt.Dimension
-import java.awt.GridLayout
 import java.util.Base64
+import javax.swing.ButtonGroup
 import javax.swing.JCheckBox
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JRadioButton
 
 /**
- * Dialog for configuring OpenCode server connection.
- * Allows user to specify host:port before starting the terminal.
+ * Dialog for starting an OpenCode session.
+ *
+ * A local session needs no input: opencode v2 runs as a service-managed background daemon whose
+ * endpoint and password are discovered from `opencode service status` and `service.json`. Only a
+ * remote server needs a typed address and password, so those fields stay hidden until "Remote
+ * server" is selected. The rarely used options (working directory, web UI) sit in a folded
+ * "Advanced" section.
  */
 class OpenCodeConnectDialog(
-    private val project: Project,
-    private val defaultPort: Int
+    private val project: Project
 ) : DialogWrapper(project, true) {
 
     data class ConnectionInfo(
+        /** True when the endpoint and credentials come from service discovery, not from the dialog. */
+        val local: Boolean,
         val hostname: String,
         val port: Int,
         val password: String?,
@@ -39,16 +45,27 @@ class OpenCodeConnectDialog(
         val customBasePath: String? = null
     )
 
-    private val addressField = JBTextField("127.0.0.1:$defaultPort")
+    private val props = PropertiesComponent.getInstance()
+
+    private val localRadio = JRadioButton("Local service (recommended)")
+    private val remoteRadio = JRadioButton("Remote server")
+
+    private val addressField = JBTextField()
     private val passwordField = JBPasswordField()
     private val basePathField = ComboBox<String>().apply {
         isEditable = true
     }
     private val webInterfaceCheckBox = JCheckBox("Use web interface")
-    
-    var hostname: String = "127.0.0.1"
+    private val advancedToggle = JCheckBox("Advanced options (working directory, web UI)")
+
+    private lateinit var remotePanel: JPanel
+    private lateinit var advancedPanel: JPanel
+
+    var local: Boolean = true
         private set
-    var port: Int = defaultPort
+    var hostname: String = DEFAULT_HOSTNAME
+        private set
+    var port: Int = DEFAULT_PORT
         private set
     var password: String? = null
         private set
@@ -60,109 +77,143 @@ class OpenCodeConnectDialog(
     init {
         title = "Connect to OpenCode"
         setOKButtonText("Connect")
-        setCancelButtonText("Close")
+        setCancelButtonText("Cancel")
         init()
     }
 
     override fun createCenterPanel(): JComponent {
-        val panel = JPanel(BorderLayout(0, JBUI.scale(8)))
-        panel.preferredSize = Dimension(JBUI.scale(350), JBUI.scale(210))
+        ButtonGroup().apply {
+            add(localRadio)
+            add(remoteRadio)
+        }
+        val savedRemote = props.getValue(PROP_CONNECTION_MODE, MODE_LOCAL) == MODE_REMOTE
+        remoteRadio.isSelected = savedRemote
+        localRadio.isSelected = !savedRemote
 
-        val formPanel = JPanel(GridLayout(7, 1, 0, JBUI.scale(4)))
-        val addressLabel = JBLabel("Server address:")
-        val passwordLabel = JBLabel("Server password (remote only):")
-        val basePathLabel = JBLabel("Custom base path (optional):")
+        // The address is restored so a remote host does not have to be typed again. The password
+        // lives in the IDE credential store, never in options/*.xml, and the field masks it.
+        addressField.text = props.getValue(PROP_LAST_ADDRESS, "").ifBlank { "$DEFAULT_HOSTNAME:$DEFAULT_PORT" }
+        addressField.emptyText.text = "hostname:port (e.g. 10.0.0.5:49374)"
+        addressField.toolTipText = "Format: hostname:port (e.g., 127.0.0.1:4096)"
 
-        // Load saved values. The address is restored so a remote host does not have to be typed
-        // again; the port suggestion is only the fallback for a first run.
-        val props = PropertiesComponent.getInstance()
-        addressField.text = props.getValue(PROP_LAST_ADDRESS, "").ifBlank { "127.0.0.1:$defaultPort" }
-
-        // The password lives in the IDE credential store, never in options/*.xml.
         val savedPassword = loadSavedPassword() ?: migrateLegacyPassword(props)
         if (!savedPassword.isNullOrBlank()) {
             passwordField.text = savedPassword
         }
+        passwordField.emptyText.text = "Password printed by `opencode serve`"
+        passwordField.toolTipText = "Password printed by `opencode serve`. Ignored for local sessions, " +
+            "which discover their credentials automatically."
 
-        // Load saved custom base path
+        ModuleManager.getInstance(project).modules
+            .mapNotNull { it.guessModuleDir()?.path }
+            .sorted()
+            .forEach { basePathField.addItem(it) }
         val savedPath = props.getValue(PROP_CUSTOM_BASE_PATH, "")
-
-        // Load saved web-interface preference (defaults to off: the terminal is the primary UX).
-        webInterfaceCheckBox.isSelected = props.getBoolean(PROP_USE_WEB, false)
-
-        // Populate module paths
-        val moduleManager = ModuleManager.getInstance(project)
-        val modules = moduleManager.modules
-        val paths = modules.mapNotNull { it.guessModuleDir()?.path }.sorted()
-        paths.forEach { basePathField.addItem(it) }
-
         if (savedPath.isNotBlank()) {
             basePathField.item = savedPath
         } else {
             basePathField.selectedIndex = -1
         }
+        basePathField.toolTipText = "Working directory for the opencode CLI (defaults to the project root)"
 
-        addressField.toolTipText = "Format: hostname:port (e.g., 127.0.0.1:4096)"
-        passwordField.toolTipText = "Password printed by `opencode serve`. Required for remote hosts; " +
-            "local servers discover their password automatically."
-        passwordField.emptyText.text = "Required for remote hosts (local servers are automatic)"
-        basePathField.toolTipText = "Override project base path for opencode.exe working directory"
+        webInterfaceCheckBox.isSelected = props.getBoolean(PROP_USE_WEB, false)
         webInterfaceCheckBox.toolTipText = "Open the opencode web UI (/doc) instead of the terminal"
 
-        formPanel.add(addressLabel)
-        formPanel.add(addressField)
-        formPanel.add(passwordLabel)
-        formPanel.add(passwordField)
-        formPanel.add(basePathLabel)
-        formPanel.add(basePathField)
-        formPanel.add(webInterfaceCheckBox)
+        advancedToggle.isSelected = savedPath.isNotBlank() || webInterfaceCheckBox.isSelected
+        advancedToggle.toolTipText = "Working directory and web UI are rarely needed, so they are folded away"
 
-        panel.add(formPanel, BorderLayout.CENTER)
+        remotePanel = FormBuilder.createFormBuilder()
+            .addLabeledComponent("Server address:", addressField)
+            .addLabeledComponent("Server password:", passwordField)
+            .panel
 
-        return panel
+        advancedPanel = FormBuilder.createFormBuilder()
+            .addLabeledComponent("Custom base path:", basePathField)
+            .addComponent(webInterfaceCheckBox)
+            .panel
+
+        remotePanel.isVisible = savedRemote
+        advancedPanel.isVisible = advancedToggle.isSelected
+
+        localRadio.addActionListener { onModeChanged() }
+        remoteRadio.addActionListener { onModeChanged() }
+        advancedToggle.addActionListener { onAdvancedToggled() }
+
+        return FormBuilder.createFormBuilder()
+            .addComponent(localRadio)
+            .addComponent(localHint(), 0)
+            .addComponent(remoteRadio)
+            .addComponent(remotePanel, 1)
+            .addSeparator(10)
+            .addComponent(advancedToggle)
+            .addComponent(advancedPanel, 1)
+            .addComponentFillVertically(JPanel(), 0)
+            .panel
     }
 
-    override fun getPreferredFocusedComponent(): JComponent = addressField
+    /** Explains why the local mode asks for nothing. */
+    private fun localHint(): JBLabel = JBLabel(
+        "<html><div style='width:${JBUI.scale(340)}px'>" +
+            "Uses the background service managed by <code>opencode service</code>; " +
+            "its address and password are discovered automatically." +
+            "</div></html>"
+    ).apply {
+        border = JBUI.Borders.emptyLeft(JBUI.scale(21))
+    }
+
+    private fun onModeChanged() {
+        val remote = remoteRadio.isSelected
+        remotePanel.isVisible = remote
+        pack()
+        if (remote) {
+            addressField.requestFocusInWindow()
+        } else {
+            localRadio.requestFocusInWindow()
+        }
+    }
+
+    private fun onAdvancedToggled() {
+        advancedPanel.isVisible = advancedToggle.isSelected
+        pack()
+    }
+
+    override fun getPreferredFocusedComponent(): JComponent =
+        if (remoteRadio.isSelected) addressField else localRadio
 
     override fun doValidate(): ValidationInfo? {
-        val info = validateConnection(addressField.text, passwordField.password.concatToString())
+        if (!remoteRadio.isSelected) return null
+        val problem = validateRemoteConnection(addressField.text, passwordField.password.concatToString())
             ?: return null
         // The address is checked first, so an address-only re-check identifies the offending field.
         val component = if (validateAddress(addressField.text) == null) passwordField else addressField
-        return ValidationInfo(info.message, component)
+        return ValidationInfo(problem.message, component)
     }
 
     override fun doOKAction() {
-        val input = addressField.text.trim()
-        val parts = input.split(":")
-        hostname = parts[0].trim()
-        port = parts[1].trim().toInt()
-
-        val passwordValue = passwordField.password.concatToString().trim()
-        val newPassword = passwordValue.ifBlank { null }
-        password = newPassword
-
-        val basePathValue = (basePathField.editor.item as? String)?.trim() ?: ""
-        val newBasePath = basePathValue.ifBlank { null }
-        customBasePath = newBasePath
-
+        val remote = remoteRadio.isSelected
+        local = !remote
         useWebInterface = webInterfaceCheckBox.isSelected
 
-        // Save values for next time
-        val props = PropertiesComponent.getInstance()
-        props.setValue(PROP_LAST_ADDRESS, "$hostname:$port")
-
-        // Save the password in the credential store (cleared when the field is left empty).
-        savePassword(newPassword)
-
-        // Save custom base path
+        val newBasePath = (basePathField.editor.item as? String)?.trim().orEmpty().ifBlank { null }
+        customBasePath = newBasePath
         if (newBasePath.isNullOrBlank()) {
             props.unsetValue(PROP_CUSTOM_BASE_PATH)
         } else {
             props.setValue(PROP_CUSTOM_BASE_PATH, newBasePath)
         }
-
         props.setValue(PROP_USE_WEB, useWebInterface)
+        props.setValue(PROP_CONNECTION_MODE, if (remote) MODE_REMOTE else MODE_LOCAL)
+
+        if (remote) {
+            val input = addressField.text.trim()
+            val parts = input.split(":")
+            hostname = parts[0].trim()
+            port = parts[1].trim().toInt()
+            password = passwordField.password.concatToString().trim().ifBlank { null }
+            props.setValue(PROP_LAST_ADDRESS, "$hostname:$port")
+            savePassword(password)
+        }
+        // A local session keeps the disabled defaults: discovery supplies endpoint and password.
 
         super.doOKAction()
     }
@@ -170,15 +221,21 @@ class OpenCodeConnectDialog(
     companion object {
         private val logger = Logger.getInstance(OpenCodeConnectDialog::class.java)
 
-        private const val PROP_LAST_ADDRESS = "opencode.lastAddress"
+        private const val DEFAULT_HOSTNAME = "127.0.0.1"
+        private const val DEFAULT_PORT = 4096
 
         /** Legacy location of the password: Base64 in the IDE options file. Migrated on first read. */
         private const val PROP_LEGACY_PASSWORD = "opencode.lastPassword"
 
+        private const val PROP_LAST_ADDRESS = "opencode.lastAddress"
         private const val PROP_CUSTOM_BASE_PATH = "opencode.customBasePath"
         private const val PROP_USE_WEB = "opencode.useWebInterface"
+        private const val PROP_CONNECTION_MODE = "opencode.connectionMode"
 
-        /** Credential-store entry holding the last server password. */
+        private const val MODE_LOCAL = "local"
+        private const val MODE_REMOTE = "remote"
+
+        /** Credential-store entry holding the last remote server password. */
         private val passwordAttributes = CredentialAttributes("OpenCodeV2/serverPassword")
 
         private fun loadSavedPassword(): String? = try {
@@ -216,26 +273,23 @@ class OpenCodeConnectDialog(
         }
 
         /**
-         * Hosts treated as "local". The v2 background service is service-managed: its endpoint and
-         * password are auto-discovered from `service.json`, so the dialog password is not required.
-         */
-        private val LOCAL_HOSTS = setOf("127.0.0.1", "localhost", "0.0.0.0")
-
-        /**
          * Pure validation shared by [doValidate]; kept free of Swing/EDT state so it is unit-testable.
          *
-         * The password is only required for **remote** hosts: a local host resolves its credentials
-         * through service discovery (`opencode service status` + `service.json`), so a blank password
-         * must not block connecting to it. Remote hosts authenticate with the password printed by
-         * `opencode serve` and therefore require a non-blank value.
+         * A local session needs neither address nor password: discovery resolves both, so nothing
+         * typed here could be authoritative. A remote session authenticates with the password
+         * printed by `opencode serve` and therefore requires a valid address and a non-blank value.
          *
-         * @param host the "hostname:port" text from the address field.
-         * @param password the raw server password; ignored for local hosts.
-         * @return a [ValidationInfo] describing the first problem, or null when the input is usable.
+         * @param local whether the dialog's "Local service" mode is selected
+         * @param host the "hostname:port" text from the address field
+         * @param password the raw server password
+         * @return a [ValidationInfo] describing the first problem, or null when the input is usable
          */
-        fun validateConnection(host: String, password: String): ValidationInfo? {
+        fun validateConnection(local: Boolean, host: String, password: String): ValidationInfo? =
+            if (local) null else validateRemoteConnection(host, password)
+
+        /** Validates a remote connection: address first, then the password. */
+        private fun validateRemoteConnection(host: String, password: String): ValidationInfo? {
             validateAddress(host)?.let { return it }
-            if (isLocalHost(host)) return null
             return validatePassword(password)
         }
 
@@ -267,15 +321,6 @@ class OpenCodeConnectDialog(
             return null
         }
 
-        /**
-         * True when the "hostname:port" text points at a local host (the service-managed endpoint).
-         * Only meaningful after [validateAddress] accepted the text.
-         */
-        private fun isLocalHost(host: String): Boolean {
-            val hostname = host.trim().substringBefore(':').trim().lowercase()
-            return hostname in LOCAL_HOSTS
-        }
-
         /** Validates the server password, required only for remote hosts. */
         private fun validatePassword(password: String): ValidationInfo? =
             if (password.isBlank()) {
@@ -286,13 +331,13 @@ class OpenCodeConnectDialog(
 
         /**
          * Shows the dialog and returns the result.
-         * @return ConnectionInfo if user clicked Connect, null if cancelled
+         * @return ConnectionInfo if the user clicked Connect, null if cancelled
          */
-        fun show(project: Project, defaultPort: Int): ConnectionInfo? {
-            val dialog = OpenCodeConnectDialog(project, defaultPort)
+        fun show(project: Project): ConnectionInfo? {
+            val dialog = OpenCodeConnectDialog(project)
             return if (dialog.showAndGet()) {
                 ConnectionInfo(
-                    dialog.hostname, dialog.port, dialog.password,
+                    dialog.local, dialog.hostname, dialog.port, dialog.password,
                     dialog.useWebInterface, dialog.customBasePath
                 )
             } else {
