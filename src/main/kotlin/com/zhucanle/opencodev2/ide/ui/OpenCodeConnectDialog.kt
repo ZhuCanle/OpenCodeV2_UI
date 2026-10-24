@@ -10,11 +10,9 @@ import com.intellij.openapi.project.guessModuleDir
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.ui.ValidationInfo
-import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
-import com.intellij.util.ui.JBUI
 import java.util.Base64
 import javax.swing.ButtonGroup
 import javax.swing.JCheckBox
@@ -28,8 +26,7 @@ import javax.swing.JRadioButton
  * A local session needs no input: opencode v2 runs as a service-managed background daemon whose
  * endpoint and password are discovered from `opencode service status` and `service.json`. Only a
  * remote server needs a typed address and password, so those fields stay hidden until "Remote
- * server" is selected. The rarely used options (working directory, web UI) sit in a folded
- * "Advanced" section.
+ * server" is selected. The working directory and the web UI apply to both modes and stay visible.
  */
 class OpenCodeConnectDialog(
     private val project: Project
@@ -47,7 +44,7 @@ class OpenCodeConnectDialog(
 
     private val props = PropertiesComponent.getInstance()
 
-    private val localRadio = JRadioButton("Local service (recommended)")
+    private val localRadio = JRadioButton("Local service")
     private val remoteRadio = JRadioButton("Remote server")
 
     private val addressField = JBTextField()
@@ -56,10 +53,8 @@ class OpenCodeConnectDialog(
         isEditable = true
     }
     private val webInterfaceCheckBox = JCheckBox("Use web interface")
-    private val advancedToggle = JCheckBox("Advanced options (working directory, web UI)")
 
     private lateinit var remotePanel: JPanel
-    private lateinit var advancedPanel: JPanel
 
     var local: Boolean = true
         private set
@@ -119,46 +114,27 @@ class OpenCodeConnectDialog(
         webInterfaceCheckBox.isSelected = props.getBoolean(PROP_USE_WEB, false)
         webInterfaceCheckBox.toolTipText = "Open the opencode web UI (/doc) instead of the terminal"
 
-        advancedToggle.isSelected = savedPath.isNotBlank() || webInterfaceCheckBox.isSelected
-        advancedToggle.toolTipText = "Working directory and web UI are rarely needed, so they are folded away"
-
         remotePanel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Server address:", addressField)
             .addLabeledComponent("Server password:", passwordField)
             .panel
 
-        advancedPanel = FormBuilder.createFormBuilder()
-            .addLabeledComponent("Custom base path:", basePathField)
-            .addComponent(webInterfaceCheckBox)
-            .panel
-
         remotePanel.isVisible = savedRemote
-        advancedPanel.isVisible = advancedToggle.isSelected
 
         localRadio.addActionListener { onModeChanged() }
         remoteRadio.addActionListener { onModeChanged() }
-        advancedToggle.addActionListener { onAdvancedToggled() }
 
+        // Everything but the remote address/password is always visible: the working directory and
+        // the web UI apply to a local session too, so folding them away only hid the settings.
         return FormBuilder.createFormBuilder()
             .addComponent(localRadio)
-            .addComponent(localHint(), 0)
             .addComponent(remoteRadio)
             .addComponent(remotePanel, 1)
             .addSeparator(10)
-            .addComponent(advancedToggle)
-            .addComponent(advancedPanel, 1)
+            .addLabeledComponent("Custom base path:", basePathField)
+            .addComponent(webInterfaceCheckBox)
             .addComponentFillVertically(JPanel(), 0)
             .panel
-    }
-
-    /** Explains why the local mode asks for nothing. */
-    private fun localHint(): JBLabel = JBLabel(
-        "<html><div style='width:${JBUI.scale(340)}px'>" +
-            "Uses the background service managed by <code>opencode service</code>; " +
-            "its address and password are discovered automatically." +
-            "</div></html>"
-    ).apply {
-        border = JBUI.Borders.emptyLeft(JBUI.scale(21))
     }
 
     private fun onModeChanged() {
@@ -170,11 +146,6 @@ class OpenCodeConnectDialog(
         } else {
             localRadio.requestFocusInWindow()
         }
-    }
-
-    private fun onAdvancedToggled() {
-        advancedPanel.isVisible = advancedToggle.isSelected
-        pack()
     }
 
     override fun getPreferredFocusedComponent(): JComponent =
