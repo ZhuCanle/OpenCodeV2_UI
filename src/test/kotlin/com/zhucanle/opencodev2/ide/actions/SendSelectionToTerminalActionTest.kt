@@ -6,8 +6,8 @@ import com.zhucanle.opencodev2.ide.api.OpenCodeApiClient
 import com.zhucanle.opencodev2.ide.terminal.TerminalTextWriter
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext
 import com.intellij.openapi.components.service
-import com.intellij.testFramework.MapDataContext
 import com.intellij.testFramework.PlatformTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.util.concurrent.CopyOnWriteArrayList
@@ -39,10 +39,10 @@ class SendSelectionToTerminalActionTest : BasePlatformTestCase() {
         myFixture.tempDirFixture.createFile("root/mydir/file2.txt")
 
         val action = SendSelectionToTerminalAction()
-        val dataContext = MapDataContext()
-        dataContext.put(CommonDataKeys.PROJECT, project)
-        dataContext.put(CommonDataKeys.VIRTUAL_FILE_ARRAY, arrayOf(dir))
-        dataContext.put(CommonDataKeys.EDITOR, null)
+        val dataContext = SimpleDataContext.builder()
+            .add(CommonDataKeys.PROJECT, project)
+            .add(CommonDataKeys.VIRTUAL_FILE_ARRAY, arrayOf(dir))
+            .build()
 
         action.actionPerformed(AnActionEvent.createFromDataContext("place", null, dataContext))
 
@@ -61,10 +61,11 @@ class SendSelectionToTerminalActionTest : BasePlatformTestCase() {
         myFixture.editor.selectionModel.setSelection(0, 4)
 
         val action = SendSelectionToTerminalAction()
-        val dataContext = MapDataContext()
-        dataContext.put(CommonDataKeys.PROJECT, project)
-        dataContext.put(CommonDataKeys.EDITOR, myFixture.editor)
-        dataContext.put(CommonDataKeys.VIRTUAL_FILE, file.virtualFile)
+        val dataContext = SimpleDataContext.builder()
+            .add(CommonDataKeys.PROJECT, project)
+            .add(CommonDataKeys.EDITOR, myFixture.editor)
+            .add(CommonDataKeys.VIRTUAL_FILE, file.virtualFile)
+            .build()
 
         action.actionPerformed(AnActionEvent.createFromDataContext("place", null, dataContext))
 

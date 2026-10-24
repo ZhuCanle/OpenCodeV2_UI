@@ -44,8 +44,9 @@ import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.concurrency.AppExecutorUtil
 
+import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
-import org.jetbrains.plugins.terminal.TerminalView
+import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -879,7 +880,11 @@ class OpenCodeService(private val project: Project) : Disposable {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
         activeBasePath = customBasePath
         val wd = customBasePath ?: project.basePath
-        val w = TerminalView.getInstance(project).createLocalShellWidget(wd, t)
+        // createLocalShellWidget() is deprecated; it only wraps createShellWidget(.., true, true) in
+        // a ShellTerminalWidget cast, so call the supported API directly and convert explicitly.
+        val w = ShellTerminalWidget.toShellJediTermWidgetOrThrow(
+            TerminalToolWindowManager.getInstance(project).createShellWidget(wd, t, true, true)
+        )
         // Relative `@path` links belong to the terminal's working directory, not always project.basePath.
         OpenCodeTerminalLinkFilter.install(project, w, wd)
         val f = OpenCodeTerminalVirtualFile(t)

@@ -124,6 +124,17 @@ intellijPlatform {
     }
 }
 
+// Kotlin 2.x emits bridge methods for every default method of an implemented Kotlin interface
+// (e.g. ToolWindowFactory). Those bridges reference platform API that is deprecated or experimental
+// in newer IDEs, which the Plugin Verifier reports as *our* usages. `no-compatibility` (formerly
+// -Xjvm-default=all) lets the platform interfaces keep their own default implementations, so no
+// bridges are generated.
+kotlin {
+    compilerOptions {
+        freeCompilerArgs.add("-jvm-default=no-compatibility")
+    }
+}
+
 tasks {
     // NOTE: Java/Kotlin JVM targets are intentionally NOT set here. The IntelliJ Platform Gradle
     // plugin pins the toolchain to the JVM required by the target IDE (JBR 25 for 2026.2), and

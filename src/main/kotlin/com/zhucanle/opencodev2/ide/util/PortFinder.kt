@@ -8,7 +8,7 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
 import java.net.Socket
-import java.net.URL
+import java.net.URI
 import java.util.Base64
 
 /**
@@ -115,7 +115,8 @@ object PortFinder {
         username: String?,
         password: String?
     ): HttpURLConnection {
-        val connection = URL("http://$hostname:$port/api/info")
+        // URL(String) is deprecated since JDK 20; build the URL through URI instead.
+        val connection = URI("http://$hostname:$port/api/info").toURL()
             .openConnection(Proxy.NO_PROXY) as HttpURLConnection
         connection.connectTimeout = CONNECT_TIMEOUT_MS
         connection.readTimeout = READ_TIMEOUT_MS
