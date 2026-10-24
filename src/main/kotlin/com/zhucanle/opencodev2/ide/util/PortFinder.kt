@@ -3,8 +3,13 @@ package com.zhucanle.opencodev2.ide.util
 import com.intellij.openapi.diagnostic.Logger
 import org.jetbrains.annotations.VisibleForTesting
 import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
+import java.net.Socket
+import java.net.URL
+import java.util.Base64
 
 /**
  * Utility for finding available ports for OpenCode server.
@@ -20,6 +25,9 @@ object PortFinder {
     private const val MAX_ATTEMPTS = 100
     private const val CONNECT_TIMEOUT_MS = 5000
     private const val READ_TIMEOUT_MS = 5000
+
+    /** Responses that prove an HTTP server is listening: 401/403 only mean it wants credentials. */
+    private val HEALTHY_RESPONSE_CODES = setOf(200, 401, 403)
 
     /**
      * Finds an available port starting from START_PORT.
@@ -53,9 +61,9 @@ object PortFinder {
 
         // Check 1: Explicit IPv4 localhost bind check
         return try {
-            java.net.ServerSocket().use { s ->
+            ServerSocket().use { s ->
                 s.reuseAddress = false
-                s.bind(java.net.InetSocketAddress("127.0.0.1", port))
+                s.bind(InetSocketAddress("127.0.0.1", port))
                 true
             }
         } catch (e: IOException) {
@@ -71,41 +79,55 @@ object PortFinder {
      * proves a server is present (it just requires auth).
      */
     fun isOpenCodeRunningOnPort(
-        port: Int, 
+        port: Int,
         hostname: String = "127.0.0.1",
         username: String? = null,
         password: String? = null
     ): Boolean {
-        return try {
-            val url = java.net.URL("http://$hostname:$port/api/info")
-            val connection = url.openConnection(Proxy.NO_PROXY) as java.net.HttpURLConnection
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = READ_TIMEOUT_MS
-            connection.requestMethod = "GET"
-            connection.instanceFollowRedirects = false
-            
-            if (username != null && password != null) {
-                val credentials = "$username:$password"
-                val encodedCredentials = java.util.Base64.getEncoder().encodeToString(credentials.toByteArray())
-                connection.setRequestProperty("Authorization", "Basic $encodedCredentials")
-            }
-
-            try {
-                val responseCode = connection.responseCode
-                val isHealthy = responseCode == 200 || responseCode == 401 || responseCode == 403
-                if (!isHealthy) {
-                    logger.debug("Health check failed for $hostname:$port. Response code: $responseCode")
-                }
-                isHealthy
-            } finally {
-                // responseCode throws when the port is taken by a non-HTTP service; without the
-                // finally the socket would stay open until GC.
-                connection.disconnect()
-            }
+        val connection = try {
+            openInfoConnection(hostname, port, username, password)
         } catch (e: Exception) {
+            // Malformed host/port or blocked connect: nothing is listening there.
+            logger.debug("Health check failed for $hostname:$port. Error: ${e.message}")
+            return false
+        }
+
+        return try {
+            val responseCode = connection.responseCode
+            val healthy = responseCode in HEALTHY_RESPONSE_CODES
+            if (!healthy) {
+                logger.debug("Health check failed for $hostname:$port. Response code: $responseCode")
+            }
+            healthy
+        } catch (e: IOException) {
+            // responseCode throws when the port is taken by a non-HTTP service.
             logger.debug("Health check failed for $hostname:$port. Error: ${e.message}")
             false
+        } finally {
+            connection.disconnect()
         }
+    }
+
+    /** Opens the probe request; the caller owns the connection and must disconnect it. */
+    private fun openInfoConnection(
+        hostname: String,
+        port: Int,
+        username: String?,
+        password: String?
+    ): HttpURLConnection {
+        val connection = URL("http://$hostname:$port/api/info")
+            .openConnection(Proxy.NO_PROXY) as HttpURLConnection
+        connection.connectTimeout = CONNECT_TIMEOUT_MS
+        connection.readTimeout = READ_TIMEOUT_MS
+        connection.requestMethod = "GET"
+        connection.instanceFollowRedirects = false
+
+        if (username != null && password != null) {
+            val credentials = "$username:$password"
+            val encoded = Base64.getEncoder().encodeToString(credentials.toByteArray())
+            connection.setRequestProperty("Authorization", "Basic $encoded")
+        }
+        return connection
     }
 
     /**
@@ -148,8 +170,8 @@ object PortFinder {
 
     private fun isPortOpen(host: String, port: Int, timeoutMs: Int = 1000): Boolean {
         return try {
-            java.net.Socket().use { socket ->
-                socket.connect(java.net.InetSocketAddress(host, port), timeoutMs)
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), timeoutMs)
                 true
             }
         } catch (e: Exception) {
