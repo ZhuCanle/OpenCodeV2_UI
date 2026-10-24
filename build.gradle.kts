@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.7"
+version = "1.3.8"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,15 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.8</h2>
+            <ul>
+                <li>New: the connect dialog is local-first. It opens in "Local service" mode and asks for nothing - the address and password of the background service are discovered automatically - while the address and password fields only appear when "Remote server" is selected. The last choice is remembered.</li>
+                <li>New: the working directory and the web interface options moved into a folded "Advanced options" section, so the dialog only shows what the current mode needs.</li>
+                <li>Fix: the dialog no longer scans for a free port before it opens, so it appears immediately instead of after a probe of up to 100 ports.</li>
+                <li>Fix: local web mode opened the web tab on the port typed into the dialog instead of the port the service actually listens on. The tab now follows the discovered endpoint.</li>
+                <li>Fix: a turn that ran in one IDE window opened its diff tab in another window. The turn events (session.execution.started/succeeded/failed) carry no directory on the v2 wire, so every window treated them as its own; a turn is now attributed to the project that owns the session, which also covers sessions that existed before the plugin connected.</li>
+                <li>Note: the plugin no longer uses platform APIs that are deprecated in 2024.2 and 2026.2 where a supported replacement exists.</li>
+            </ul>
             <h2>1.3.7</h2>
             <ul>
                 <li>Fix: the first OpenCode launch in an IDE session logged "This method is forbidden on EDT" (issue #3). On IntelliJ 2026.2 the terminal shell path (TerminalProjectOptionsProvider.getShellPath) blocks and may not be read on the Event Dispatch Thread; the plugin now resolves it on a background thread before typing the command into the terminal.</li>
