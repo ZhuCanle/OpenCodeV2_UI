@@ -48,6 +48,7 @@ import org.jetbrains.plugins.terminal.ShellTerminalWidget
 import org.jetbrains.plugins.terminal.TerminalProjectOptionsProvider
 import org.jetbrains.plugins.terminal.TerminalToolWindowManager
 
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -215,10 +216,21 @@ class OpenCodeService(private val project: Project) : Disposable {
         terminalEditor?.let { editor -> TerminalTextWriter { editor.sendText(it) } }
     }
 
-    internal fun setTestDeps(sm: SessionManager, dvs: DiffViewerService, client: OpenCodeApiClient) {
+    internal fun setTestDeps(
+        sm: SessionManager,
+        dvs: DiffViewerService,
+        client: OpenCodeApiClient,
+        ownedSessionIds: Collection<String>? = null
+    ) {
         _sessionManager = sm
         _diffViewerService = dvs
         apiClient = client
+        // Without a session list the ownership check stays off, so existing tests keep the
+        // unscoped behaviour; tests for the check pass the project's session ids explicitly.
+        if (ownedSessionIds != null) {
+            ownedSessions.addAll(ownedSessionIds)
+            sessionOwnershipKnown = true
+        }
     }
     
     internal var invokeLater: (Runnable) -> Unit = { 
@@ -330,25 +342,87 @@ class OpenCodeService(private val project: Project) : Disposable {
         barrierTimeoutMs = BARRIER_TIMEOUT_MS
     )
 
-    private fun handleEvent(event: OpenCodeEvent) {
+    /**
+     * Sessions that belong to this project.
+     *
+     * `session.execution.started|succeeded|failed` are the only events the plugin consumes that
+     * carry no `location.directory`, so the SSE scope filter cannot attribute them: every open
+     * window receives them. They are attributed by session id instead — see [ownsSession].
+     */
+    private val ownedSessions: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /**
+     * False until the project's session list has been read; turn events then stay unscoped rather
+     * than dropping every resumed session's events (see [seedOwnedSessions]).
+     */
+    @Volatile private var sessionOwnershipKnown = false
+
+    /**
+     * Routes one SSE event. [session.execution.*] is attributed to this project first: a window used
+     * to start a turn for another project's session and then display that session's diff in its own
+     * frame, because the turn events carry no directory to filter on.
+     */
+    internal fun handleEvent(event: OpenCodeEvent) {
         if (event !is UnknownEvent) logger.info("[OpenCode] SSE: ${event.type}")
         when (event) {
+            // `session.created` is location-scoped, so receiving it proves the session is ours.
+            is SessionCreatedEvent -> ownedSessions.add(event.sessionID)
             // v2 turn start (`session.execution.started`): the real "busy" signal on the v2 wire.
             is SessionExecutionStartedEvent -> {
                 val sessionId = event.sessionID
+                if (!ownsSession(sessionId)) return
                 if (sessionManager.onTurnStart(sessionId)) {
                     turnTracker.onExecutionStarted(sessionId)
                 }
             }
             // v2 turn end (`session.execution.succeeded|failed|interrupted`): any outcome ends the turn.
-            is SessionExecutionEndedEvent -> handleTurnEnd(event.sessionID, event.outcome, event.errorMessage)
+            is SessionExecutionEndedEvent -> {
+                if (!ownsSession(event.sessionID)) return
+                handleTurnEnd(event.sessionID, event.outcome, event.errorMessage)
+            }
             // v2 step end (`session.step.ended`): carries the changed files and the assistant message id.
             is SessionStepEndedEvent -> {
                 val sessionId = event.sessionID
+                // Location-scoped as well, so it also proves ownership (e.g. after a reconnect).
+                ownedSessions.add(sessionId)
                 event.assistantMessageID?.let { turnTracker.onMessageId(sessionId, it) }
                 event.files.forEach { sessionManager.onFileEdited(sessionId, it) }
             }
             else -> {}
+        }
+    }
+
+    /**
+     * True when [sessionId] belongs to this project.
+     *
+     * Ownership is seeded from the server's directory-scoped session list when the SSE stream
+     * connects, and extended by the location-scoped `session.created` / `session.step.ended`
+     * frames. Sessions created before the plugin connected stay covered by the seed.
+     */
+    private fun ownsSession(sessionId: String): Boolean {
+        if (!sessionOwnershipKnown || ownedSessions.contains(sessionId)) return true
+        logger.info("[OpenCode] Ignoring session $sessionId: it belongs to another project")
+        return false
+    }
+
+    /**
+     * Loads the ids of this project's sessions so the location-less turn events can be attributed.
+     *
+     * The session list is filtered by `directory` on the server, so it is authoritative. A failure
+     * leaves the ownership check off ([sessionOwnershipKnown] stays false) instead of silently
+     * dropping the events of every pre-existing session.
+     *
+     * Runs on the connection thread, before the stream opens, so no turn event can arrive first.
+     */
+    private fun seedOwnedSessions(basePath: String) {
+        val client = apiClient ?: return
+        try {
+            val sessions = client.getSessions(basePath)
+            ownedSessions.addAll(sessions.map { it.id })
+            sessionOwnershipKnown = true
+            logger.info("[OpenCode] ${sessions.size} sessions belong to this project")
+        } catch (e: Exception) {
+            logger.warn("[OpenCode] Could not list the project's sessions; turn events stay unscoped", e)
         }
     }
 
@@ -594,6 +668,8 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun connectToSse() {
         val basePath = project.basePath ?: return
         sseListener?.disconnect()
+        // Attribution must be ready before the first frame arrives: turn events carry no location.
+        seedOwnedSessions(basePath)
         apiClient?.let {
             sseListener = it.createEventListener(
                 basePath,
@@ -667,6 +743,10 @@ class OpenCodeService(private val project: Project) : Disposable {
         versionWarningShown = false
         authFailureNotified = false
         turnTracker.clearAll()
+        // The next connection may point at another service: drop the old ids and re-seed them from
+        // the new endpoint's directory-scoped session list.
+        ownedSessions.clear()
+        sessionOwnershipKnown = false
         terminateProcess()
         terminalVirtualFile?.let { OpenCodeTerminalFileEditorProvider.disposeWidget(it, project, notifyService = false) }
         terminalVirtualFile = null; terminalEditor = null; webVirtualFile = null; apiClient = null

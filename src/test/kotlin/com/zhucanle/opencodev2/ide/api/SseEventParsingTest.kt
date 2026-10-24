@@ -2,6 +2,7 @@ package com.zhucanle.opencodev2.ide.api
 
 import com.zhucanle.opencodev2.ide.api.models.OpenCodeEvent
 import com.zhucanle.opencodev2.ide.api.models.OpenCodeEventDeserializer
+import com.zhucanle.opencodev2.ide.api.models.SessionCreatedEvent
 import com.zhucanle.opencodev2.ide.api.models.SessionExecutionEndedEvent
 import com.zhucanle.opencodev2.ide.api.models.SessionExecutionStartedEvent
 import com.zhucanle.opencodev2.ide.api.models.SessionStepEndedEvent
@@ -32,6 +33,16 @@ class SseEventParsingTest {
     fun parsesExecutionStartedAsTurnStart() {
         val e = parse("""{"id":"evt_1","type":"session.execution.started","data":{"sessionID":"s1"}}""")
         assertTrue(e is SessionExecutionStartedEvent && e.sessionID == "s1")
+    }
+
+    @Test
+    fun parsesSessionCreated() {
+        // The captured v2 frame: location-scoped, so it also proves the session belongs to us.
+        val e = parse(
+            """{"id":"evt_2","created":1792052378577,"type":"session.created",""" +
+                """"location":{"directory":"/work/repo"},"data":{"sessionID":"ses_1"}}"""
+        )
+        assertTrue(e is SessionCreatedEvent && e.sessionID == "ses_1")
     }
 
     @Test

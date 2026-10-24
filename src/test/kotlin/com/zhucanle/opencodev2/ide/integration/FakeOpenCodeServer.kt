@@ -96,6 +96,9 @@ class FakeOpenCodeServer(val port: Int) {
     /** True once an SSE consumer is attached to `GET /api/event`. */
     fun hasSseClient(): Boolean = sseClients.isNotEmpty()
 
+    /** Number of live `/api/event` subscribers; the two-window tests need both attached. */
+    fun sseClientCount(): Int = sseClients.size
+
     fun setInfoResponse(json: String) {
         infoResponse = json
     }

@@ -18,6 +18,18 @@ data class UnknownEvent(
 ) : OpenCodeEvent()
 
 /**
+ * A session was created (`session.created`).
+ *
+ * The frame carries `location.directory`, so it is already scoped to the owning project by the SSE
+ * listener. The plugin uses it to remember which sessions belong to this project: the turn events
+ * (`session.execution.*`) carry no location and are attributed by session id.
+ */
+data class SessionCreatedEvent(
+    val sessionID: String,
+    override val type: String = "session.created"
+) : OpenCodeEvent()
+
+/**
  * v2 turn start (`session.execution.started`). Emitted once per turn, before the first step.
  *
  * This is the real v2 "busy" signal; the v1 `session.status {status:{type:"busy"}}` was never
@@ -81,6 +93,9 @@ class OpenCodeEventDeserializer : JsonDeserializer<OpenCodeEvent> {
         // A frame missing its session id is dropped (UnknownEvent) so turn state is never keyed
         // under "".
         return when (eventType) {
+            "session.created" -> data.nonBlank("sessionID")
+                ?.let { SessionCreatedEvent(sessionID = it) }
+                ?: UnknownEvent(eventType)
             "session.execution.started" -> data.nonBlank("sessionID")
                 ?.let { SessionExecutionStartedEvent(sessionID = it) }
                 ?: UnknownEvent(eventType)

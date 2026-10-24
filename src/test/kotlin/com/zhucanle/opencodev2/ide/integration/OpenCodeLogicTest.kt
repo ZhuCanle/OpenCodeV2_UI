@@ -57,9 +57,22 @@ class OpenCodeLogicTest {
 
     // ==================== Turn drivers (v2 wire) ====================
 
+    /** Sessions already announced on this test's stream (the real server announces each once). */
+    private val announcedSessions = mutableSetOf<String>()
+
+    /** Emits `session.created`, the location-scoped frame that attributes the session to a project. */
+    private fun announceSession(sessionId: String) {
+        if (!announcedSessions.add(sessionId)) return
+        server.broadcast(
+            """{"id":"evt_created","created":1,"type":"session.created",""" +
+                """"location":{"directory":"${projectDir.absolutePath}"},"data":{"sessionID":"$sessionId"}}"""
+        )
+    }
+
     /** Emits `session.execution.started` and blocks until the plugin has begun the turn. */
     private fun startTurn(sessionId: String = SESSION_ID) {
         turnCount++
+        announceSession(sessionId)
         server.broadcast("""{"type":"session.execution.started","data":{"sessionID":"$sessionId"}}""")
         runner.sessionManager.awaitTurnStart(turnCount)
     }
@@ -85,6 +98,47 @@ class OpenCodeLogicTest {
     }
 
     // ==================== Scenarios ====================
+
+    /**
+     * Regression test for the "diff opens in the wrong project" bug.
+     *
+     * `session.execution.*` frames carry no `location.directory`, so the scope filter keeps them and
+     * a second window on the same service received the first project's turn, started a turn for its
+     * session, fetched that session's diff and displayed it in its own frame. The turn must now be
+     * attributed to the window that observed the session's location-scoped frames.
+     */
+    @Test
+    fun turnOfAnotherProjectDoesNotOpenItsDiffHere() {
+        val otherDir = Files.createTempDirectory("opencode-logic-other").toFile()
+        val other = TestRunner(otherDir, server.activePort)
+        try {
+            awaitSseClients(2)
+
+            writeFile("only-here.kt", "new")
+            startTurn()
+            runner.sessionManager.simulateCapture("only-here.kt", "old")
+            stepEnded("msg-own", listOf("only-here.kt"))
+            server.setCurrentDiffResponse(diffJson("only-here.kt", "modified"))
+            endTurn()
+
+            runner.awaitDiffs(1)
+            other.awaitNoDiffs()
+            assertEquals("The other window must not start a turn", 0, other.sessionManager.turnStarts())
+        } finally {
+            otherDir.deleteRecursively()
+        }
+    }
+
+    /** Blocks until [expected] SSE subscribers are attached to the fake server. */
+    private fun awaitSseClients(expected: Int, timeoutMs: Long = 5000) {
+        val start = System.currentTimeMillis()
+        while (server.sseClientCount() < expected) {
+            if (System.currentTimeMillis() - start > timeoutMs) {
+                throw AssertionError("Timeout waiting for $expected SSE clients (got ${server.sseClientCount()})")
+            }
+            Thread.sleep(20)
+        }
+    }
 
     /** Normal modification: server reports `modified`; before comes from the local capture. */
     @Test
@@ -339,6 +393,9 @@ class TestSessionManager(project: Project) : SessionManager(project) {
             Thread.sleep(10)
         }
     }
+
+    /** Turns this window has started; lets a test assert that a foreign turn was ignored. */
+    fun turnStarts(): Int = turnStartCount.get()
 
     override fun onTurnEnd(sessionId: String): com.zhucanle.opencodev2.ide.session.TurnSnapshot? {
         val realSnapshot = super.onTurnEnd(sessionId) ?: return null
