@@ -140,12 +140,26 @@ class OpenCodeConnectDialog(
     private fun onModeChanged() {
         val remote = remoteRadio.isSelected
         remotePanel.isVisible = remote
-        pack()
+        resizeToContent()
         if (remote) {
             addressField.requestFocusInWindow()
         } else {
             localRadio.requestFocusInWindow()
         }
+    }
+
+    /**
+     * Resizes the dialog to the rows that are visible now.
+     *
+     * `pack()` on its own only ever grows the window: the platform derives a window minimum size
+     * from the content, and a window cannot be resized below that minimum, so the height of the
+     * taller remote layout stayed in place after switching back to a local session. Dropping the
+     * minimum and re-applying the recomputed size lets the dialog shrink again.
+     */
+    private fun resizeToContent() {
+        pack()
+        window?.minimumSize = null
+        preferredSize?.let { setSize(it.width, it.height) }
     }
 
     override fun getPreferredFocusedComponent(): JComponent =

@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.8"
+version = "1.3.9"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.9</h2>
+            <ul>
+                <li>Fix: switching the connect dialog back to "Local service" now shrinks it again. The window kept the height of the remote address and password rows, because the platform pins a window minimum size and re-packing cannot resize below it.</li>
+            </ul>
             <h2>1.3.8</h2>
             <ul>
                 <li>New: the connect dialog is local-first. It opens in "Local service" mode and asks for nothing - the address and password of the background service are discovered automatically - while the address and password fields only appear when "Remote server" is selected. The last choice is remembered.</li>

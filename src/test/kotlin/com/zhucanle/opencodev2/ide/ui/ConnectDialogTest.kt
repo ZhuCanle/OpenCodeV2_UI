@@ -66,6 +66,36 @@ class ConnectDialogTest : BasePlatformTestCase() {
         }
     }
 
+    /**
+     * The address and password rows must give their space back in local mode.
+     *
+     * The window itself is sized by `pack()` and is not part of a headless test, but the layout it
+     * measures is: a dialog that only ever grows is either keeping the rows or measuring them in.
+     */
+    fun testSwitchingBackToLocalReclaimsTheRemoteRows() {
+        ApplicationManager.getApplication().invokeAndWait {
+            val dialog = OpenCodeConnectDialog(project)
+            try {
+                val panel = invoke(dialog, "createCenterPanel") as JComponent
+                val localHeight = panel.preferredSize.height
+                radio(panel, "Remote server").doClick()
+                val remoteHeight = panel.preferredSize.height
+                radio(panel, "Local service").doClick()
+                assertTrue(
+                    "Remote mode must add the address and password rows",
+                    remoteHeight > localHeight
+                )
+                assertEquals(
+                    "Switching back to a local session must collapse the remote rows",
+                    localHeight,
+                    panel.preferredSize.height
+                )
+            } finally {
+                Disposer.dispose(dialog.disposable)
+            }
+        }
+    }
+
     /** Runs [body] with the saved mode set to [mode], then restores the option. */
     private fun withSavedMode(mode: String, body: () -> Unit) {
         val props = PropertiesComponent.getInstance()
@@ -79,9 +109,10 @@ class ConnectDialogTest : BasePlatformTestCase() {
     }
 
     private fun radio(dialog: OpenCodeConnectDialog, text: String): JRadioButton =
-        (invoke(dialog, "createCenterPanel") as JComponent).descendants()
-            .filterIsInstance<JRadioButton>()
-            .first { it.text == text }
+        radio(invoke(dialog, "createCenterPanel") as JComponent, text)
+
+    private fun radio(root: Component, text: String): JRadioButton =
+        root.descendants().filterIsInstance<JRadioButton>().first { it.text == text }
 
     /** Presses Connect. */
     private fun pressConnect(dialog: OpenCodeConnectDialog) {
