@@ -19,6 +19,7 @@ import com.intellij.openapi.editor.event.DocumentEvent
 import com.intellij.openapi.editor.event.DocumentListener
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFile
@@ -95,6 +96,89 @@ open class SessionManager(private val project: Project) : Disposable {
     /** Pending diffs awaiting user action, keyed by relative file path */
     private val pendingDiffs = ConcurrentHashMap<String, DiffEntry>()
 
+    // ==================== Change Scope ====================
+
+    /**
+     * Working directory of the active session. It differs from [Project.getBasePath] when a custom
+     * base path is configured, and file changes under it still belong to this window.
+     */
+    @Volatile
+    var activeBasePath: String? = null
+
+    /** Which VFS changes this window may claim; see [ChangeScope]. */
+    @VisibleForTesting
+    internal val changeScope = ChangeScope(roots = { workspaceRoots() })
+
+    /**
+     * Directories whose file changes belong to this window: the project base path, the session's
+     * custom working directory, and every attached content root (a multi-module project keeps its
+     * modules outside `basePath`).
+     */
+    private fun workspaceRoots(): List<String> {
+        val roots = mutableListOf<String>()
+        project.basePath?.let { roots.add(it) }
+        activeBasePath?.let { roots.add(it) }
+        if (ApplicationManager.getApplication() != null) {
+            runCatching { ProjectRootManager.getInstance(project).contentRoots }
+                .getOrNull()
+                ?.forEach { roots.add(it.path) }
+        }
+        return roots
+    }
+
+    private fun absolutePathOf(filePath: String): String? {
+        val normalized = PathUtil.toSystemIndependentPath(filePath)
+        if (File(normalized).isAbsolute) return normalized
+        return PathUtil.resolveProjectPath(project, normalized)
+    }
+
+    /** True when [filePath] (relative or absolute) belongs to this window's project. */
+    private fun isOwnedChange(filePath: String): Boolean =
+        absolutePathOf(filePath)?.let { changeScope.isOwned(it) } ?: false
+
+    /**
+     * Gate for every VFS callback: drops events from other projects, git metadata and working-tree
+     * files rewritten by a git operation (merge, pull, rebase, stash).
+     */
+    private fun acceptsChange(file: VirtualFile?): Boolean {
+        if (file == null || !file.isValid) return false
+        return when (val verdict = changeScope.classify(file.path)) {
+            ChangeScope.Verdict.TRACK -> true
+            ChangeScope.Verdict.IGNORE_GIT_OPERATION -> {
+                val relativePath = PathUtil.relativizeToProject(project, file.path)
+                // A pending diff captured before the operation no longer matches the file on disk.
+                pendingDiffs.remove(relativePath)
+                logger.info("[Git] Ignoring change caused by a git operation: $relativePath")
+                false
+            }
+            ChangeScope.Verdict.IGNORE_OUTSIDE -> {
+                logger.debug("[Scope] Ignoring change outside the project: ${file.path}")
+                false
+            }
+            ChangeScope.Verdict.IGNORE_METADATA -> false
+        }
+    }
+
+    /**
+     * Binary files cannot be rendered as text diffs: reading a PNG as text yields garbage, which is
+     * how an image once ended up in the diff viewer. A NUL byte in the head of the file is the
+     * usual binary marker (`git` uses the same rule).
+     */
+    private fun isBinaryFile(absolutePath: String): Boolean {
+        val file = File(absolutePath)
+        if (!file.isFile) return false
+        return try {
+            file.inputStream().use { input ->
+                val buffer = ByteArray(1024)
+                val read = input.read(buffer)
+                read > 0 && buffer.copyOf(read).any { it == 0.toByte() }
+            }
+        } catch (e: Exception) {
+            logger.debug("[Scope] Binary check failed for $absolutePath: ${e.message}")
+            false
+        }
+    }
+
     // ==================== Document Listener ====================
     
     private val documentListener = object : DocumentListener {
@@ -103,6 +187,7 @@ open class SessionManager(private val project: Project) : Disposable {
             val cmd = CommandProcessor.getInstance().currentCommandName
             if (!cmd.isNullOrEmpty()) {
                 FileDocumentManager.getInstance().getFile(event.document)?.let { file ->
+                    if (!acceptsChange(file)) return@let
                     val relativePath = PathUtil.relativizeToProject(project, file.path)
                     // A document change cannot be attributed to one session, so every active turn
                     // records it; each turn then filters its own diffs against that signal.
@@ -115,6 +200,7 @@ open class SessionManager(private val project: Project) : Disposable {
 
     private val vfsListener = object : VirtualFileListener {
         override fun fileCreated(event: VirtualFileEvent) {
+            if (!acceptsChange(event.file)) return
             onVfsChange(event.file)
             // Record creation event - will be cross-checked with serverEditedFiles later
             // to determine if it's truly AI-created or user-created
@@ -135,9 +221,17 @@ open class SessionManager(private val project: Project) : Disposable {
             captureContentBeforeChange(event.file)
         }
         
-        override fun fileDeleted(event: VirtualFileEvent) = onVfsChange(event.file)
-        override fun contentsChanged(event: VirtualFileEvent) = onVfsChange(event.file)
-        override fun fileMoved(event: VirtualFileMoveEvent) = onVfsChange(event.file)
+        override fun fileDeleted(event: VirtualFileEvent) {
+            if (acceptsChange(event.file)) onVfsChange(event.file)
+        }
+
+        override fun contentsChanged(event: VirtualFileEvent) {
+            if (acceptsChange(event.file)) onVfsChange(event.file)
+        }
+
+        override fun fileMoved(event: VirtualFileMoveEvent) {
+            if (acceptsChange(event.file)) onVfsChange(event.file)
+        }
         // fileCopied is rare for AI and caused compilation issues
     }
 
@@ -147,7 +241,12 @@ open class SessionManager(private val project: Project) : Disposable {
 
     internal fun captureContentBeforeChange(file: VirtualFile?) {
         if (file == null || !file.isValid || file.isDirectory) return
-        
+        if (!acceptsChange(file)) return
+        if (file.fileType.isBinary) {
+            logger.info("[Turn ${turnNumbers()}] Skipping binary file: ${file.path}")
+            return
+        }
+
         val relativePath = PathUtil.relativizeToProject(project, file.path)
 
         // Capture only for the turns that still need this file: we want the ORIGINAL state before
@@ -284,6 +383,10 @@ open class SessionManager(private val project: Project) : Disposable {
      * Called when OpenCode edits a file (from the `session.step.ended` SSE event's `files[]`).
      */
     fun onFileEdited(sessionId: String, filePath: String) {
+        if (!isOwnedChange(filePath)) {
+            logger.info("[Scope] Ignoring server-reported edit outside the project: $filePath")
+            return
+        }
         val relativePath = PathUtil.relativizeToProject(project, filePath)
         val state = turns[sessionId]
         if (state == null) {
@@ -344,11 +447,31 @@ open class SessionManager(private val project: Project) : Disposable {
         val afterByFile = HashMap<String, String>()
         fun resolveAfter(file: String): String = afterByFile.getOrPut(file) { deriveAfter(file) }
 
+        // Files a git operation rewrote are not agent edits. The server may still report them (its
+        // diff is a plain working-tree comparison), so they are dropped before anything else.
+        val gitTouchedKeys = changeScope.gitTouchedPaths()
+            .map { PathUtil.relativizeToProject(project, it) }
+            .toSet()
+
+        val scopedServerDiffs = serverDiffs.filter { diff ->
+            when {
+                !isOwnedChange(diff.file) -> {
+                    logger.info("[Scope] ${diff.file} -> SKIP: outside this project")
+                    false
+                }
+                diff.file in gitTouchedKeys -> {
+                    logger.info("[Git] ${diff.file} -> SKIP: rewritten by a git operation")
+                    false
+                }
+                else -> true
+            }
+        }
+
         // 0. Pre-Filter: Detect and discard "Stale No-Op" Server Diffs
         // If Server returns a diff that results in NO CHANGE (Before == After),
         // but VFS detected a physical change, it means the Server Diff is stale/wrong.
         // We discard it so that the Rescue logic (Step 1) can generate a correct Synthetic Diff from disk.
-        val validServerDiffs = serverDiffs.filter { diff ->
+        val validServerDiffs = scopedServerDiffs.filter { diff ->
             val file = diff.file
             val isVfsTouched = file in snapshot.vfsChangedFiles || 
                               file in snapshot.aiCreatedFiles || 
@@ -378,6 +501,16 @@ open class SessionManager(private val project: Project) : Disposable {
             // Skip if Server already returned this file
             if (vfsFile in serverFileNames) {
                 logger.info("[Rescue] $vfsFile -> SKIP: Already in server diffs")
+                return@filter false
+            }
+
+            // Files outside the project and files a git operation rewrote are never agent edits.
+            if (!isOwnedChange(vfsFile)) {
+                logger.info("[Rescue] $vfsFile -> SKIP: Outside this project")
+                return@filter false
+            }
+            if (vfsFile in gitTouchedKeys) {
+                logger.info("[Rescue] $vfsFile -> SKIP: Rewritten by a git operation")
                 return@filter false
             }
 
@@ -478,6 +611,13 @@ open class SessionManager(private val project: Project) : Disposable {
             // to avoid overwriting user work or showing confusing conflict states.
             if (entry.hasUserEdits) {
                 logger.info("[DiffFilter] $file -> SKIP: User edited this file.")
+                return@filter false
+            }
+
+            // A.2 Binary files: a text diff would show decoded bytes as garbage.
+            val absolutePath = absolutePathOf(file)
+            if (absolutePath != null && isBinaryFile(absolutePath)) {
+                logger.info("[DiffFilter] $file -> SKIP: Binary file.")
                 return@filter false
             }
 
@@ -653,11 +793,15 @@ open class SessionManager(private val project: Project) : Disposable {
     fun getLiveAiCreatedFiles(): Set<String> = lateAiCreatedFiles.toSet()
     
     fun getKnownFilePaths(): Set<String> {
-        return lastKnownFileStates.keys.toSet()
+        return lastKnownFileStates.keys.filter { isOwnedChange(it) }.toSet()
     }
 
     fun updateKnownState(files: List<String>) {
         files.forEach { rawPath ->
+            if (!isOwnedChange(rawPath)) {
+                logger.debug("[Scope] Ignoring known state outside the project: $rawPath")
+                return@forEach
+            }
             val absPath = PathUtil.resolveProjectPath(project, rawPath)
             if (absPath != null) {
                 val file = File(absPath)
@@ -880,7 +1024,8 @@ open class SessionManager(private val project: Project) : Disposable {
      * The order matters: the diff viewer pages through this list by index, and a raw
      * `ConcurrentHashMap` iteration order made "next" jump to an arbitrary entry.
      */
-    fun getAllDiffEntries(): List<DiffEntry> = pendingDiffs.values.sortedBy { it.file }
+    fun getAllDiffEntries(): List<DiffEntry> =
+        pendingDiffs.values.filter { isOwnedChange(it.file) }.sortedBy { it.file }
 
     // ==================== Lifecycle ====================
 
@@ -891,6 +1036,7 @@ open class SessionManager(private val project: Project) : Disposable {
         lateAiCreatedFiles.clear()
         pendingDiffs.clear()
         lastKnownFileStates.clear()
+        changeScope.clear()
         turnCounter.set(0)
     }
 

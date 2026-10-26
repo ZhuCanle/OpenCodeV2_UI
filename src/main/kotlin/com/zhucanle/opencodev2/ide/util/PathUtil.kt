@@ -63,6 +63,29 @@ object PathUtil {
         return osName.contains("windows")
     }
 
+    /**
+     * True when [path] is [basePath] itself or lives inside it.
+     *
+     * Used to keep VFS events from other projects out of this window's turn. Symlinked paths are
+     * compared through their canonical form, so `/tmp/x` and `/private/tmp/x` match on macOS even
+     * when the file itself is gone (a deleted file cannot be canonicalised on its own).
+     */
+    fun isUnder(basePath: String?, path: String): Boolean = isUnder(basePath, path, isWindows())
+
+    /** [isUnder] with an explicit casing rule, so Windows behaviour is testable anywhere. */
+    internal fun isUnder(basePath: String?, path: String, caseInsensitive: Boolean): Boolean {
+        if (basePath.isNullOrBlank() || path.isBlank()) return false
+        val base = unifySeparators(basePath)
+        val target = unifySeparators(path)
+        if (target.equals(base, ignoreCase = caseInsensitive)) return true
+        if (target.startsWith("$base/", ignoreCase = caseInsensitive)) return true
+
+        val baseCanonical = canonicalize(base) ?: return false
+        val targetCanonical = canonicalize(target) ?: return false
+        return targetCanonical.equals(baseCanonical, ignoreCase = caseInsensitive) ||
+            targetCanonical.startsWith("$baseCanonical/", ignoreCase = caseInsensitive)
+    }
+
     fun resolveProjectPath(project: Project, filePath: String): String? {
         return resolveToSystemIndependentPath(project.basePath, filePath)
     }

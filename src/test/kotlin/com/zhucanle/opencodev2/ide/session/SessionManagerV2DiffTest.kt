@@ -8,6 +8,7 @@ import java.lang.reflect.Proxy
 import java.nio.file.Files
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -122,6 +123,65 @@ class SessionManagerV2DiffTest {
 
         assertEquals("old", entry.beforeContent)
         assertEquals("", entry.resolvedAfter)
+    }
+
+    /**
+     * A VFS event outside the project (another IDE window edited a file) must never reach the diff
+     * pipeline: the window would otherwise show that other project's file as an agent diff.
+     */
+    @Test
+    fun fileOutsideTheProjectIsNeverShown() {
+        val otherProject = Files.createTempDirectory("other-project").toFile()
+        try {
+            val foreign = File(otherProject, "main.kt")
+            foreign.writeText("foreign content")
+            val d = FileDiff(foreign.absolutePath, "", 1, 1, status = "modified")
+
+            val entries = sm.getProcessedDiffs(
+                listOf(d),
+                snapshotWith(vfsChanged = setOf(foreign.absolutePath))
+            )
+
+            assertTrue("foreign file leaked into the diff list: ${entries.map { it.file }}", entries.isEmpty())
+        } finally {
+            otherProject.deleteRecursively()
+        }
+    }
+
+    /**
+     * A `git pull` / `git merge` rewrites the working tree, but those files are not agent edits.
+     * The server may still report them as session diffs, so the pipeline has to drop them.
+     */
+    @Test
+    fun gitOperationFilesAreNotShown() {
+        writeDisk("pulled.kt", "pulled content")
+        sm.changeScope.classify(File(projectDir, ".git/FETCH_HEAD").path)
+        assertEquals(
+            ChangeScope.Verdict.IGNORE_GIT_OPERATION,
+            sm.changeScope.classify(File(projectDir, "pulled.kt").path)
+        )
+
+        val d = FileDiff("pulled.kt", "", 2, 2, status = "modified")
+        val entries = sm.getProcessedDiffs(
+            listOf(d),
+            snapshotWith(capturedBefore = mapOf("pulled.kt" to "old content"))
+        )
+
+        assertTrue("git operation diff leaked: ${entries.map { it.file }}", entries.isEmpty())
+    }
+
+    /** Binary files cannot be rendered as text diffs (a PNG reads back as garbage). */
+    @Test
+    fun binaryFilesAreNotShown() {
+        writeDisk("logo.png", "\u0000\u0001binary")
+        val d = FileDiff("logo.png", "", 1, 1, status = "modified")
+
+        val entries = sm.getProcessedDiffs(
+            listOf(d),
+            snapshotWith(capturedBefore = mapOf("logo.png" to "\u0000old binary"))
+        )
+
+        assertTrue("binary diff leaked: ${entries.map { it.file }}", entries.isEmpty())
     }
 }
 

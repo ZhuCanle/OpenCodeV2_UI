@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.9"
+version = "1.3.10"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,12 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.10</h2>
+            <ul>
+                <li>Fix: a diff tab could show a file of another project. The VFS listener is application-wide, so an edit in another IDE window was recorded as a change of this turn; changes are now scoped to the project base path, the custom working directory and the attached content roots.</li>
+                <li>Fix: working-tree files rewritten by a git operation (merge, pull, rebase, stash) no longer appear as agent diffs, and `.git` internals are never tracked.</li>
+                <li>Fix: binary files (images and other non-text files) are no longer captured or shown as text diffs.</li>
+            </ul>
             <h2>1.3.9</h2>
             <ul>
                 <li>Fix: switching the connect dialog back to "Local service" now shrinks it again. The window kept the height of the remote address and password rows, because the platform pins a window minimum size and re-packing cannot resize below it.</li>

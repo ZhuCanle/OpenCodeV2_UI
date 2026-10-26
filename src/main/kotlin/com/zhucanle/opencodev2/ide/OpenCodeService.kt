@@ -733,6 +733,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         // Reset every piece of connection state, not just the endpoint: leaving a stale password
         // (and mode) behind made the state inconsistent and kept credentials in memory.
         port = null; hostname = "127.0.0.1"; username = null; password = null; activeBasePath = null
+        sessionManager.activeBasePath = null
     }
 
     /**
@@ -882,6 +883,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun createTerminalUIInternal(p: Int, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
         activeBasePath = customBasePath
+        sessionManager.activeBasePath = customBasePath
         val wd = customBasePath ?: project.basePath
         // createLocalShellWidget() is deprecated; it only wraps createShellWidget(.., true, true) in
         // a ShellTerminalWidget cast, so call the supported API directly and convert explicitly.
