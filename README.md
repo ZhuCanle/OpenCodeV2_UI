@@ -96,7 +96,8 @@ Press `Cmd+\` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two m
 
 *Your last connection settings (address, mode, password) are remembered automatically.*
 
-![Step 1: Launch OpenCode](images/1.png)
+![Step 1: Launch OpenCode With Local Service](images/1.png)
+![Step 1-1: Launch OpenCode With Remote Server](images/1-2.png)
 
 ### 2. Send Code Context to OpenCode
 
