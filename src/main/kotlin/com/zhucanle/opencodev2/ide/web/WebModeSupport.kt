@@ -13,9 +13,6 @@ object WebModeSupport {
     private const val BIND_ALL_HOST = "0.0.0.0"
     private const val LOOPBACK_HOST = "127.0.0.1"
 
-    /** Path where the opencode v2 server serves its web UI. */
-    private const val WEB_UI_PATH = "/doc"
-
     fun isJcefSupported(): Boolean {
         return try {
             JBCefApp.isSupported()
@@ -25,20 +22,24 @@ object WebModeSupport {
     }
 
     /**
-     * Builds the v2 web UI URL: `http://<host>:<port>/doc`.
+     * Builds the v2 web UI URL: `http://<host>:<port>`.
+     *
+     * The web app is a single-page application served from the root. Its client-side router only
+     * accepts `/`, `/settings`, `/connect`, `/new-session` and `/server/<id>/session/<id>`; any
+     * other path (such as the old `/doc`) throws "Unrecognised route!" while booting.
      *
      * A bind-all host is normalized to loopback because browsers reject `0.0.0.0` as a target.
      */
     fun buildUrl(host: String, port: Int): String {
         val browserHost = if (host == BIND_ALL_HOST) LOOPBACK_HOST else host
-        return "http://$browserHost:$port$WEB_UI_PATH"
+        return "http://$browserHost:$port"
     }
 
     /**
      * The `scheme://host:port` origin of [url], or null when it cannot be parsed.
      *
-     * The web UI is served from `/doc` but its SPA issues `http://host:port/api/...` XHRs, so the
-     * embedded browser must scope its auth-header injection to the whole origin, not the `/doc` URL.
+     * The web app issues `http://host:port/api/...` XHRs, so the embedded browser must scope its
+     * auth-header injection to the whole origin, not the page URL.
      */
     fun originOf(url: String): String? = try {
         val uri = java.net.URI(url)
@@ -73,7 +74,7 @@ object WebModeSupport {
             return null
         }
 
-        // v2 serves the web UI at /doc. The URL carries no credentials:
+        // The web app is served from the server root. The URL carries no credentials:
         // credentials are injected via JS Pre-Auth in OpenCodeWebFileEditor.
         val url = buildUrl(host, port)
         

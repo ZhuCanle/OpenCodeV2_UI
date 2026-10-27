@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.10"
+version = "1.3.11"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,10 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.11</h2>
+            <ul>
+                <li>Fix: web mode failed to start with "Unrecognised route!". The embedded browser was pointed at `/doc`, but the web app is a single-page application served from the server root whose router only accepts `/`, `/settings`, `/connect`, `/new-session` and `/server/&lt;id&gt;/session/&lt;id&gt;`, so it threw while booting. The tab now opens the root route. Thanks to @hashimotok-delien for reporting the route change.</li>
+            </ul>
             <h2>1.3.10</h2>
             <ul>
                 <li>Fix: a diff tab could show a file of another project. The VFS listener is application-wide, so an edit in another IDE window was recorded as a change of this turn; changes are now scoped to the project base path, the custom working directory and the attached content roots.</li>

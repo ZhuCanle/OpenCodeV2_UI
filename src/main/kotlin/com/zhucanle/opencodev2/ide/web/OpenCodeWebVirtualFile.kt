@@ -10,7 +10,7 @@ import javax.swing.Icon
  * Virtual file backing the embedded OpenCode web UI tab.
  *
  * @param tabName tab title, e.g. `OpenCode Web(4096)`
- * @param targetUrl URL the embedded browser loads (`http://host:port/doc`)
+ * @param targetUrl URL the embedded browser loads (`http://host:port`)
  */
 class OpenCodeWebVirtualFile(
     tabName: String,

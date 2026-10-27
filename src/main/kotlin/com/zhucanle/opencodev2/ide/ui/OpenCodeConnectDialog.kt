@@ -112,7 +112,7 @@ class OpenCodeConnectDialog(
         basePathField.toolTipText = "Working directory for the opencode CLI (defaults to the project root)"
 
         webInterfaceCheckBox.isSelected = props.getBoolean(PROP_USE_WEB, false)
-        webInterfaceCheckBox.toolTipText = "Open the opencode web UI (/doc) instead of the terminal"
+        webInterfaceCheckBox.toolTipText = "Open the opencode web UI instead of the terminal"
 
         remotePanel = FormBuilder.createFormBuilder()
             .addLabeledComponent("Server address:", addressField)

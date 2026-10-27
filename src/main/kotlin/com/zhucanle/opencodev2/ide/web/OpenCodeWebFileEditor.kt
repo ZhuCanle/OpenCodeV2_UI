@@ -57,8 +57,8 @@ class OpenCodeWebFileEditor(
                 val authString = "opencode:$password"
                 val encodedAuth = Base64.getEncoder().encodeToString(authString.toByteArray())
                 val authHeader = "Basic $encodedAuth"
-                // The web UI lives at `/doc`, but the SPA issues `http://host:port/api/*` XHRs, so
-                // injection must be scoped to the origin rather than the `/doc` URL itself.
+                // The web app is served from the server root, but the SPA issues `http://host:port/api/*`
+                // XHRs, so injection must be scoped to the origin rather than the page URL itself.
                 val targetOrigin = WebModeSupport.originOf(file.targetUrl)
                 if (targetOrigin == null) {
                     logger.warn("Cannot derive an origin from ${file.targetUrl}; skipping auth injection")

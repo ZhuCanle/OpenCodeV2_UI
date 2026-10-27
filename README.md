@@ -88,7 +88,7 @@ Press `Cmd+\` (Mac) or `Ctrl+\` (Win/Linux) to open the connection dialog. Two m
   Basic auth (`opencode:<password>`) on every request, so the password is required; `opencode serve`
   prints it to stdout at startup.
 - **Web interface (optional)**: tick **Use web interface** in the dialog to open the opencode web UI
-  (`/doc`) in an IDE tab backed by JCEF instead of the terminal tab. The choice is remembered along
+  in an IDE tab backed by JCEF instead of the terminal tab. The choice is remembered along
   with the other connection settings. Requires JCEF support in the IDE (present in all mainstream
   JetBrains IDEs; without it the terminal tab is used).
   The web tab is registered through the `com.intellij.modules.jcef` module, which exists from
