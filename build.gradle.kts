@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.11"
+version = "1.3.12"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,11 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.12</h2>
+            <ul>
+                <li>Fix: connecting in web mode also opened a terminal tab, so every web session left a second, unused terminal behind (and the launch shortcut focused that terminal instead of the web tab). Web mode now opens only the web tab; the terminal is used only as a fallback when the web tab cannot be opened at all (JCEF unavailable or the tab failed).</li>
+                <li>Fix: restoring a session in web mode could leave the session working directory unset, so relative paths were resolved against the project root.</li>
+            </ul>
             <h2>1.3.11</h2>
             <ul>
                 <li>Fix: web mode failed to start with "Unrecognised route!". The embedded browser was pointed at `/doc`, but the web app is a single-page application served from the server root whose router only accepts `/`, `/settings`, `/connect`, `/new-session` and `/server/&lt;id&gt;/session/&lt;id&gt;`, so it threw while booting. The tab now opens the root route. Thanks to @hashimotok-delien for reporting the route change.</li>

@@ -102,6 +102,20 @@ class OpenCodeService(private val project: Project) : Disposable {
             running -> if (interactive) LaunchAction.ASK_RESTORE else LaunchAction.RESTORE_UI
             else -> if (interactive) LaunchAction.ASK_RESTART else LaunchAction.SHOW_CONNECT_DIALOG
         }
+
+        /**
+         * True when a connection also has to open the terminal TUI.
+         *
+         * Web mode used to create the terminal TUI before the web tab, so every web connection left
+         * a second, unused terminal tab behind (and the launch shortcut focused that terminal instead
+         * of the web tab). The terminal is only a fallback for when the web tab cannot be opened at
+         * all - JCEF unavailable, or the tab failed to open.
+         *
+         * @param web the connection asked for the web UI
+         * @param webTabOpened whether the web tab was really created
+         */
+        internal fun opensTerminalTui(web: Boolean, webTabOpened: Boolean): Boolean = !web || !webTabOpened
+
         private const val OPEN_CODE_TAB_PREFIX = "OpenCode"
         private const val RETRY_INTERVAL_MS = 5000L
         private const val BARRIER_TIMEOUT_MS = 2000L
@@ -791,13 +805,34 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun connectToExistingServer(h: String, p: Int, a: ServerAuth, ui: Boolean, web: Boolean, customBasePath: String? = null) {
         hostname = h; port = p; username = a.username; password = a.password
-        if (ui) { if (web) createWebUI(h, p) else createTerminalUIInternal(p, false, null, customBasePath) }
-        else { ApplicationManager.getApplication().invokeLater { Messages.showInfoMessage(project, "Connected to $h:$p", "OpenCode") } }
+        applyBasePath(customBasePath)
+        if (ui) {
+            val webOpened = web && createWebUI(h, p)
+            if (opensTerminalTui(web, webOpened)) createTerminalUIInternal(p, false, null, customBasePath)
+        } else { ApplicationManager.getApplication().invokeLater { Messages.showInfoMessage(project, "Connected to $h:$p", "OpenCode") } }
         initializeApiClient(h, p); startConnectionManager()
     }
 
-    private fun createWebUI(h: String, p: Int) {
+    /**
+     * Applies the session working directory to the service and to the session manager.
+     *
+     * Both have to agree: the session manager resolves the server's relative paths against it, so a
+     * web-only session (which no longer creates the terminal TUI) still scopes its diffs correctly.
+     */
+    private fun applyBasePath(customBasePath: String?) {
+        activeBasePath = customBasePath
+        sessionManager.activeBasePath = customBasePath
+    }
+
+    /**
+     * Opens the web tab and remembers it.
+     *
+     * @return false when JCEF is unavailable or the tab could not be opened, so the caller can fall
+     * back to the terminal UI instead of claiming "connected" with no UI at all.
+     */
+    private fun createWebUI(h: String, p: Int): Boolean {
         webVirtualFile = WebModeSupport.openWebTab(project, h, p, password) { if (webVirtualFile == null) terminateProcess() }
+        return webVirtualFile != null
     }
 
     /**
@@ -826,9 +861,13 @@ class OpenCodeService(private val project: Project) : Disposable {
                 if (project.isDisposed) return@invokeLater
                 hostname = endpoint.host; port = endpoint.port; password = endpoint.password
                 username = ServerAuth.DEFAULT_USERNAME
-                lastMode = if (web) ConnectionMode.WEB else ConnectionMode.TERMINAL
-                createTerminalUIInternal(endpoint.port, true, service.binary, customBasePath)
-                if (web) createWebUI(endpoint.host, endpoint.port)
+                applyBasePath(customBasePath)
+                // Web mode opens the web tab alone: creating the terminal TUI as well used to leave
+                // a second, unused terminal tab behind. The terminal only takes over when the tab
+                // cannot be opened.
+                val webOpened = web && createWebUI(endpoint.host, endpoint.port)
+                lastMode = if (webOpened) ConnectionMode.WEB else ConnectionMode.TERMINAL
+                if (opensTerminalTui(web, webOpened)) createTerminalUIInternal(endpoint.port, true, service.binary, customBasePath)
             }
             // Bounded readiness poll against `/api/info`; the ConnectionManager retries anyway.
             if (!awaitServiceReady(endpoint.host, endpoint.port, endpoint.password)) {
@@ -882,8 +921,7 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun createTerminalUIInternal(p: Int, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
-        activeBasePath = customBasePath
-        sessionManager.activeBasePath = customBasePath
+        applyBasePath(customBasePath)
         val wd = customBasePath ?: project.basePath
         // createLocalShellWidget() is deprecated; it only wraps createShellWidget(.., true, true) in
         // a ShellTerminalWidget cast, so call the supported API directly and convert explicitly.
@@ -1033,7 +1071,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun pinTerminalTab(f: VirtualFile) { try { FileEditorManagerEx.getInstanceEx(project).currentWindow?.setFilePinned(f, true) } catch (_: Exception) {} }
     private fun restartServer(m: ConnectionMode) {
         val h = hostname; val p = port ?: return; val pwd = password; val basePath = activeBasePath
-        disconnectAndReset(); hostname = h; port = p; password = pwd; lastMode = m; activeBasePath = basePath
+        disconnectAndReset(); hostname = h; port = p; password = pwd; lastMode = m; applyBasePath(basePath)
         when (m) {
             ConnectionMode.REMOTE -> connectToExistingServer(h, p, ServerAuth(password = pwd), false, false, basePath)
             // Local modes re-discover the endpoint instead of reusing the one captured above.
@@ -1057,7 +1095,9 @@ class OpenCodeService(private val project: Project) : Disposable {
         } else {
             // Terminal UI doesn't exist, need to create new terminal and start opencode
             try {
-                createTerminalUIInternal(port ?: return, false)
+                // Keep the session working directory: without it the recreated terminal falls back
+                // to the project root and the session manager starts resolving paths against it.
+                createTerminalUIInternal(port ?: return, false, null, activeBasePath)
             } catch (e: Exception) {
                 logger.warn("[OpenCode] Failed to create terminal UI", e)
                 ApplicationManager.getApplication().invokeLater {
@@ -1066,7 +1106,18 @@ class OpenCodeService(private val project: Project) : Disposable {
             }
         }
     }
-    private fun ensureWebUi() { if (webVirtualFile != null) focusTerminalUI() else createWebUI(hostname, port ?: return) }
+    private fun ensureWebUi() {
+        if (webVirtualFile != null) {
+            focusTerminalUI()
+            return
+        }
+        val p = port ?: return
+        if (!createWebUI(hostname, p)) {
+            logger.warn("[OpenCode] Web UI unavailable; falling back to the terminal UI")
+            lastMode = ConnectionMode.TERMINAL
+            createTerminalUIInternal(p, false, null, activeBasePath)
+        }
+    }
     private fun restoreRemoteConnection() {
         // For remote connections, verify connection is alive and show status
         val p = port ?: return
