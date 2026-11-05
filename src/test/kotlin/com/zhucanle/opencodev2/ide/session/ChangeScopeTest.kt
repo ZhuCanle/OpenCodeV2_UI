@@ -20,6 +20,13 @@ class ChangeScopeTest {
     private val scope = ChangeScope(roots = { listOf(root) }, now = { clock })
 
     @Test
+    fun foreignGitMetadataDoesNotSuppressProjectEdits() {
+        scope.classify("$other/.git/FETCH_HEAD")
+        assertEquals(ChangeScope.Verdict.TRACK, scope.classify("$root/src/Main.kt"))
+        assertTrue(scope.gitTouchedPaths().isEmpty())
+    }
+
+    @Test
     fun fileInsideTheProjectIsTracked() {
         assertEquals(ChangeScope.Verdict.TRACK, scope.classify("$root/src/Main.kt"))
     }

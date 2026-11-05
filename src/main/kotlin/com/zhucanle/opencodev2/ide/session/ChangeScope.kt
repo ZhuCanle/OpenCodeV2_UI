@@ -56,6 +56,8 @@ internal class ChangeScope(
      */
     fun classify(absolutePath: String): Verdict {
         val path = PathUtil.toSystemIndependentPath(absolutePath)
+        // VFS events are application-wide, including metadata from unrelated repositories.
+        if (roots().none { it.isNotBlank() && PathUtil.isUnder(it, path) }) return Verdict.IGNORE_OUTSIDE
         val gitRelative = gitMetadataRelativePath(path)
         if (gitRelative != null) {
             noteGitMetadata(gitRelative)

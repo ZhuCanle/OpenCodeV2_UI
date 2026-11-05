@@ -37,6 +37,7 @@ internal class TurnTracker(
     }
 
     private class State {
+        val editedFiles = ConcurrentHashMap.newKeySet<String>()
         @Volatile var snapshot: TurnSnapshot? = null
         @Volatile var messageId: String? = null
         @Volatile var idleWaiting: Boolean = false
@@ -61,8 +62,9 @@ internal class TurnTracker(
     }
 
     /** `session.step.ended` reported the assistant message id of the current turn. */
-    fun onMessageId(sessionId: String, messageId: String) {
+    fun onMessageId(sessionId: String, messageId: String, files: Set<String> = emptySet()) {
         val state = stateOf(sessionId)
+        state.editedFiles.addAll(files)
         if (state.messageId != null) return
         state.messageId = messageId
         attempt(sessionId, state)
@@ -122,7 +124,7 @@ internal class TurnTracker(
         }
         state.lastTriggerAt = now
         logger.info("[Turn #${snapshot.turnNumber}] Firing the diff pipeline (session $sessionId)")
-        onDiffReady(sessionId, snapshot)
+        onDiffReady(sessionId, snapshot.copy(serverEditedFiles = snapshot.serverEditedFiles + state.editedFiles))
     }
 
     private object AppScheduler : (Long, () -> Unit) -> Cancellable {

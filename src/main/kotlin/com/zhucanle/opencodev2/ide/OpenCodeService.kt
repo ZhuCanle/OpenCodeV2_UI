@@ -379,8 +379,12 @@ class OpenCodeService(private val project: Project) : Disposable {
                 val sessionId = event.sessionID
                 // Location-scoped as well, so it also proves ownership (e.g. after a reconnect).
                 ownedSessions.add(sessionId)
-                event.assistantMessageID?.let { turnTracker.onMessageId(sessionId, it) }
                 event.files.forEach { sessionManager.onFileEdited(sessionId, it) }
+                // The step can arrive after onTurnEnd froze the snapshot. Carry its scoped file
+                // claims through the barrier before onMessageId can start the diff pipeline.
+                val files = event.files.filter { sessionManager.isOwnedChange(it) }
+                    .map { PathUtil.relativizeToProject(project, it) }.toSet()
+                event.assistantMessageID?.let { turnTracker.onMessageId(sessionId, it, files) }
             }
             else -> {}
         }
@@ -469,12 +473,11 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
 
     /**
-     * Fetches the turn's diffs and shows every still-pending entry.
+     * Fetches and shows only this turn's diffs, matching the V1 automatic popup behavior.
      *
      * The v2 diff route returns the per-file changes of the newest user turn. Entries are resolved
-     * against the turn snapshot and the working tree; the viewer then shows **all** pending entries,
-     * not only this turn's. A new round used to close the previous diff tab while its entries were
-     * still acceptable, which hid them without resolving them.
+     * against the turn snapshot and the working tree. Historical pending entries are not included
+     * in the automatic popup.
      */
     private fun fetchAndShowDiffs(sessionId: String, snapshot: TurnSnapshot) {
         val client = apiClient ?: return
@@ -504,14 +507,10 @@ class OpenCodeService(private val project: Project) : Disposable {
                 }
 
                 sessionManager.updateKnownState(entries.map { it.file })
-                val firstNewFile = entries.first().file
                 invokeLater {
                     if (project.isDisposed) return@invokeLater
-                    // Show every pending entry so entries from earlier rounds stay reachable.
-                    val pending = sessionManager.getAllDiffEntries()
-                    val initialIndex = pending.indexOfFirst { it.file == firstNewFile }.coerceAtLeast(0)
-                    logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${pending.size} pending diffs (${entries.size} new)")
-                    diffViewerService.showMultiFileDiff(pending, initialIndex)
+                    logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${entries.size} diffs")
+                    diffViewerService.showMultiFileDiff(entries)
                 }
             } catch (e: Exception) {
                 logger.error("[OpenCode] Turn #${snapshot.turnNumber} Diff fetch error", e)

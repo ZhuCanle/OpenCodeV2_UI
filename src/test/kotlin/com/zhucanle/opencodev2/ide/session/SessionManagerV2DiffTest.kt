@@ -79,13 +79,53 @@ class SessionManagerV2DiffTest {
      * collapse the diff into a no-op.
      */
     @Test
+    fun missingFileWithCapturedContentIsNotAnAgentDeletion() {
+        val entries = sm.getProcessedDiffs(
+            emptyList(), snapshotWith(capturedBefore = mapOf("gone.kt" to "old"))
+        )
+        assertTrue(entries.isEmpty())
+        assertTrue(sm.getAllDiffEntries().isEmpty())
+    }
+
+    @Test
+    fun staleServerDiffWithLateVfsEventDoesNotBecomeAnAgentEdit() {
+        writeDisk("a.kt", "new")
+        val entries = sm.getProcessedDiffs(
+            listOf(FileDiff("a.kt", "", 1, 1, status = "modified")),
+            snapshotWith(knownStates = mapOf("a.kt" to "old")),
+            extraVfsEvents = setOf("a.kt")
+        )
+        assertTrue(entries.isEmpty())
+        assertTrue(sm.getAllDiffEntries().isEmpty())
+    }
+
+    @Test
+    fun allClaimedFilesRemainPendingIncludingRescuedModificationAndDeletion() {
+        writeDisk("a.kt", "new a")
+        writeDisk("b.kt", "new b")
+        writeDisk("new.kt", "created")
+        val files = setOf("a.kt", "b.kt", "new.kt", "gone.kt")
+        val entries = sm.getProcessedDiffs(
+            listOf(FileDiff("a.kt", "", 1, 1, status = "modified"),
+                FileDiff("new.kt", "", 1, 0, status = "added")),
+            snapshotWith(
+                capturedBefore = mapOf("a.kt" to "old a", "b.kt" to "old b", "gone.kt" to "old gone"),
+                serverEdited = files,
+                aiCreated = setOf("new.kt")
+            )
+        )
+        assertEquals(files, entries.map { it.file }.toSet())
+        assertEquals(files, sm.getAllDiffEntries().map { it.file }.toSet())
+    }
+
+    @Test
     fun newFileStatusForcesEmptyBefore() {
         writeDisk("new.kt", "fun new() {}")
         val d = FileDiff("new.kt", "@@ -0,0 +1 @@", 1, 0, status = "added")
 
         val entry = sm.getProcessedDiffs(
             listOf(d),
-            snapshotWith(capturedBefore = mapOf("new.kt" to "SHOULD_NOT_BE_USED"))
+            snapshotWith(capturedBefore = mapOf("new.kt" to "SHOULD_NOT_BE_USED"), serverEdited = setOf("new.kt"))
         ).first { it.file == "new.kt" }
 
         assertEquals("", entry.beforeContent)
@@ -102,7 +142,7 @@ class SessionManagerV2DiffTest {
 
         val entry = sm.getProcessedDiffs(
             listOf(d),
-            snapshotWith(capturedBefore = mapOf("a.kt" to "old"))
+            snapshotWith(capturedBefore = mapOf("a.kt" to "old"), serverEdited = setOf("a.kt"))
         ).first { it.file == "a.kt" }
 
         assertEquals("old", entry.beforeContent)
@@ -118,7 +158,7 @@ class SessionManagerV2DiffTest {
 
         val entry = sm.getProcessedDiffs(
             listOf(d),
-            snapshotWith(capturedBefore = mapOf("gone.kt" to "old"))
+            snapshotWith(capturedBefore = mapOf("gone.kt" to "old"), serverEdited = setOf("gone.kt"))
         ).first { it.file == "gone.kt" }
 
         assertEquals("old", entry.beforeContent)
@@ -164,7 +204,7 @@ class SessionManagerV2DiffTest {
         val d = FileDiff("pulled.kt", "", 2, 2, status = "modified")
         val entries = sm.getProcessedDiffs(
             listOf(d),
-            snapshotWith(capturedBefore = mapOf("pulled.kt" to "old content"))
+            snapshotWith(capturedBefore = mapOf("pulled.kt" to "old content"), serverEdited = setOf("pulled.kt"))
         )
 
         assertTrue("git operation diff leaked: ${entries.map { it.file }}", entries.isEmpty())
@@ -178,7 +218,7 @@ class SessionManagerV2DiffTest {
 
         val entries = sm.getProcessedDiffs(
             listOf(d),
-            snapshotWith(capturedBefore = mapOf("logo.png" to "\u0000old binary"))
+            snapshotWith(capturedBefore = mapOf("logo.png" to "\u0000old binary"), serverEdited = setOf("logo.png"))
         )
 
         assertTrue("binary diff leaked: ${entries.map { it.file }}", entries.isEmpty())

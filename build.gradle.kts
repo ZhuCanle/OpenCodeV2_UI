@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "ai.opencode"
-version = "1.3.12"
+version = "1.3.13"
 
 repositories {
     mavenCentral()
@@ -54,6 +54,14 @@ intellijPlatform {
         }
 
         changeNotes = """
+            <h2>1.3.13</h2>
+            <ul>
+                <li>Fix: automatic diff popups show only the current turn's changes, matching V1 behavior instead of resurfacing all historical pending entries.</li>
+                <li>Fix: filesystem events and missing files alone no longer count as agent edits; a current-turn file claim is required.</li>
+                <li>Fix: Git metadata changes from other projects no longer suppress this project's edits.</li>
+                <li>Fix: file claims arriving with a late step-end event are included before the diff pipeline starts.</li>
+                <li>Update: align light and dark icon colors with the official OpenCode logo.</li>
+            </ul>
             <h2>1.3.12</h2>
             <ul>
                 <li>Fix: connecting in web mode also opened a terminal tab, so every web session left a second, unused terminal behind (and the launch shortcut focused that terminal instead of the web tab). Web mode now opens only the web tab; the terminal is used only as a fallback when the web tab cannot be opened at all (JCEF unavailable or the tab failed).</li>

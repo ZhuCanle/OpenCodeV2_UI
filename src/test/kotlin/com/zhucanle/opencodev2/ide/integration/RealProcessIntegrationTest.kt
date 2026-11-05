@@ -163,6 +163,7 @@ class RealProcessIntegrationTest : BasePlatformTestCase() {
         }
 
         // 3. Reject
+        sm.onFileEdited(TEST_SESSION, relPath)
         val snapshot = checkNotNull(sm.onTurnEnd(TEST_SESSION)) { "onTurnEnd returned null" }
 
         // Verify that 'isCreatedExplicitly' is FALSE: `saveText` is a modification, not a creation.

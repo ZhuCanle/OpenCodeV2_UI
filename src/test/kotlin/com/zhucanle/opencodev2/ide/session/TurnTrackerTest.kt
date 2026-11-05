@@ -64,6 +64,13 @@ class TurnTrackerTest {
     )
 
     @Test
+    fun lateStepFilesAreIncludedBeforeTheDiffCallback() {
+        tracker.onExecutionEnded("s1", snapshot(1).copy(serverEditedFiles = setOf("early.kt")))
+        tracker.onMessageId("s1", "msg_1", setOf("a.kt", "b.kt"))
+        assertEquals(setOf("early.kt", "a.kt", "b.kt"), fired.single().second.serverEditedFiles)
+    }
+
+    @Test
     fun firesWhenTheMessageIdArrivesAfterTheTurnEnded() {
         tracker.onExecutionEnded("s1", snapshot(1))
         assertTrue(fired.isEmpty())

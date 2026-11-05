@@ -133,7 +133,7 @@ open class SessionManager(private val project: Project) : Disposable {
     }
 
     /** True when [filePath] (relative or absolute) belongs to this window's project. */
-    private fun isOwnedChange(filePath: String): Boolean =
+    internal fun isOwnedChange(filePath: String): Boolean =
         absolutePathOf(filePath)?.let { changeScope.isOwned(it) } ?: false
 
     /**
@@ -463,6 +463,10 @@ open class SessionManager(private val project: Project) : Disposable {
                     logger.info("[Git] ${diff.file} -> SKIP: rewritten by a git operation")
                     false
                 }
+                diff.file !in snapshot.serverEditedFiles -> {
+                    logger.info("[Scope] ${diff.file} -> SKIP: no current-turn agent edit claim")
+                    false
+                }
                 else -> true
             }
         }
@@ -493,11 +497,17 @@ open class SessionManager(private val project: Project) : Disposable {
         }
 
         // 1. VFS Rescue: Find files changed/deleted locally but missed by Server
-        // Only rescue files that have STRONG AI affinity (serverEditedFiles) or physical deletion
+        // Only rescue files explicitly attributed to the agent in this turn.
         val rescueCandidates = snapshot.vfsChangedFiles + snapshot.capturedBeforeContent.keys + extraVfsEvents
         val serverFileNames = validServerDiffs.map { it.file }.toSet()
 
         val vfsMissing = rescueCandidates.filter { vfsFile ->
+            // A cached before-image and a missing file also occur after checkout. Neither VFS
+            // activity nor deletion alone establishes that the agent edited this file.
+            if (vfsFile !in snapshot.serverEditedFiles) {
+                logger.info("[Rescue] $vfsFile -> SKIP: No current-turn agent edit claim")
+                return@filter false
+            }
             // Skip if Server already returned this file
             if (vfsFile in serverFileNames) {
                 logger.info("[Rescue] $vfsFile -> SKIP: Already in server diffs")
@@ -537,10 +547,8 @@ open class SessionManager(private val project: Project) : Disposable {
 
             // Rescue conditions (conservative, requires evidence of AI involvement):
             //
-            // For DELETION (!exists):
-            //   - If we have capturedBeforeContent, we can safely show the diff
-            //     (we know what the original content was, so Reject can restore it)
-            //   - OR if Server claimed it via the session.step.ended SSE event
+            // For DELETION (!exists), a current-turn server claim is required above.
+            // Captured content supplies the before-image; it is not evidence of AI involvement.
             //
             // For CREATION (exists && isVfsCreated):
             //   - MUST have Server claim (session.step.ended files[]) to distinguish from user-created files
@@ -628,19 +636,16 @@ open class SessionManager(private val project: Project) : Disposable {
             // Why: serverEditedFiles contains real-time SSE events for THIS turn.
             // If Server API returns a diff without SSE claim, it's stale data from a previous turn.
             //
-            // Exception: Rescued diffs (Synthetic Diffs) which we generated locally.
-            // We can identify these by checking if the file is NOT in the original serverDiffs list.
-            // BUT: Ideally we should just check if it was touched by VFS or Server in THIS turn.
-            
-            // Check for "Signal Affinity": Did this file have any activity in this turn?
+            // This also applies to synthetic diffs: VFS events can originate from checkout,
+            // delayed refresh, or external tools and do not establish agent involvement.
             val isServerClaimed = file in snapshot.serverEditedFiles
             val isVfsTouched = file in snapshot.vfsChangedFiles || 
                               file in snapshot.aiCreatedFiles || 
                               file in snapshot.capturedBeforeContent.keys ||
                               file in extraVfsEvents
             
-            if (!isServerClaimed && !isVfsTouched) {
-                logger.info("[DiffFilter] $file -> SKIP: Stale API diff (No SSE or VFS signal in this turn).")
+            if (!isServerClaimed) {
+                logger.info("[DiffFilter] $file -> SKIP: No current-turn agent edit claim.")
                 return@filter false
             }
 
