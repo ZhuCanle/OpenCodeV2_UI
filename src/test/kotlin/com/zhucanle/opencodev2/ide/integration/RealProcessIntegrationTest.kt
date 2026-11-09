@@ -113,7 +113,9 @@ class RealProcessIntegrationTest : BasePlatformTestCase() {
         }
 
         val acceptLatch = CountDownLatch(1)
-        sm.acceptDiff(entry) { success ->
+        // Accept the newly displayed snapshot, not the one already rejected above.
+        val acceptEntry = sm.processDiffs(diffs, snapshot).single()
+        sm.acceptDiff(acceptEntry) { success ->
             assertTrue("Accept should succeed", success)
             acceptLatch.countDown()
         }

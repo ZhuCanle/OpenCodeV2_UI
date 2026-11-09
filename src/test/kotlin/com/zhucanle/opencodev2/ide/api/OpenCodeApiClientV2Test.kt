@@ -7,6 +7,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
+import java.io.IOException
 import org.junit.Before
 import org.junit.Test
 
@@ -149,16 +151,32 @@ class OpenCodeApiClientV2Test {
     fun requestsCarryBasicAuth() {
         fake.requireAuth("opencode", "pw")
         val client = OpenCodeApiClient("127.0.0.1", fake.activePort, "opencode", "wrong")
-        assertTrue(client.getSessions("/x").isEmpty())  // 401 -> empty
+        assertThrows(IOException::class.java) { client.getSessions("/x") }
     }
 
     @Test
     fun requestsWithoutAuthAreUnauthorized() {
         // When the service enforces auth, a client with no password (no Authorization header) is
-        // rejected with 401, which the client surfaces as an empty result.
+        // rejected with 401, which must not be confused with an empty session list.
         fake.requireAuth("opencode", "pw")
         val anonymous = OpenCodeApiClient("127.0.0.1", fake.activePort)
-        assertTrue(anonymous.getSessions("/x").isEmpty())
+        assertThrows(IOException::class.java) { anonymous.getSessions("/x") }
         assertNull(anonymous.getActiveSession("/x"))
+    }
+
+    @Test
+    fun malformedSessionListIsNotAValidEmptyList() {
+        for (body in listOf("not JSON", "{}", "{\"data\":{}}", "{\"data\":[null]}", "{\"data\":[{}]}")) {
+            fake.setSessions(body)
+            assertThrows("Body: $body", IOException::class.java) { client().getSessions("/x") }
+        }
+    }
+
+    @Test
+    fun serverErrorIsNotAValidEmptySessionList() {
+        fake.setSessions("{\"data\":[]}", 500)
+        assertThrows(IOException::class.java) { client().getSessions("/x") }
+        fake.setSessions("{\"data\":[]}")
+        assertTrue(client().getSessions("/x").isEmpty())
     }
 }

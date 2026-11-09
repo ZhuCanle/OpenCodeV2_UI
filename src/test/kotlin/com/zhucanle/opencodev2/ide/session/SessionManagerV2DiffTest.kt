@@ -1,6 +1,7 @@
 package com.zhucanle.opencodev2.ide.session
 
 import com.zhucanle.opencodev2.ide.api.models.FileDiff
+import com.zhucanle.opencodev2.ide.diff.DiffReviewBatch
 import com.intellij.history.Label
 import com.intellij.openapi.project.Project
 import java.io.File
@@ -78,6 +79,38 @@ class SessionManagerV2DiffTest {
      * to hold content for that path. Reading the newly written on-disk content as "before" would
      * collapse the diff into a no-op.
      */
+    @Test
+    fun displayedBatchExcludesHistoryAndReplacementSnapshots() {
+        fun record(path: String) = sm.getProcessedDiffs(
+            listOf(FileDiff(path, "", 1, 1, "modified")),
+            snapshotWith(capturedBefore = mapOf(path to "before"), serverEdited = setOf(path))
+        ).single()
+        writeDisk("history.kt", "historical edit")
+        record("history.kt")
+        writeDisk("a.kt", "AI edit")
+        writeDisk("b.kt", "AI edit")
+        val a = record("a.kt")
+        val b = record("b.kt")
+        val batch = DiffReviewBatch(listOf(a, b))
+        assertEquals(listOf(a, b), batch.remaining(sm))
+        writeDisk("a.kt", "newer turn")
+        record("a.kt")
+        assertEquals(listOf(b), batch.remaining(sm))
+        assertEquals(3, sm.getAllDiffEntries().size)
+    }
+
+    @Test
+    fun deletedEmptyFileIsStillAChange() {
+        val snapshot = snapshotWith(capturedBefore = mapOf("empty.txt" to ""), serverEdited = setOf("empty.txt"))
+        val entries = sm.getProcessedDiffs(
+            listOf(FileDiff("empty.txt", "", 0, 0, "deleted")),
+            snapshot
+        )
+        assertEquals(1, entries.size)
+        assertEquals("", entries.single().resolvedBefore)
+        assertEquals(1, sm.getProcessedDiffs(emptyList(), snapshot).size)
+    }
+
     @Test
     fun switchingDirectoryDiscardsPendingAndLateDiffResponses() {
         val other = File(projectDir, "other").apply { mkdirs() }

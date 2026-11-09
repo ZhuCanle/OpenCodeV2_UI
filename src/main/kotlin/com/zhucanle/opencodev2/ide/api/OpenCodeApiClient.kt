@@ -15,6 +15,7 @@ import com.intellij.openapi.diagnostic.Logger
 import okhttp3.Credentials
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /**
@@ -61,11 +62,24 @@ open class OpenCodeApiClient(
     /**
      * List the sessions whose working directory is [directory]
      * (`GET /api/session?directory=`).
+     * Throws when the response cannot establish ownership; only a valid array may mean no sessions.
      */
     fun getSessions(directory: String): List<Session> {
         val url = "$baseUrl/api/session?directory=${encode(serverPath(directory))}"
         val type = object : TypeToken<List<Session>>() {}.type
-        return readDataArray<Session>(url, type)
+        val data = readData(url)
+        if (data == null || !data.isJsonArray || data.asJsonArray.any {
+                !it.isJsonObject || it.asJsonObject.get("id")?.let { id ->
+                    id.isJsonPrimitive && id.asJsonPrimitive.isString && id.asString.isNotBlank()
+                } != true
+            }) {
+            throw IOException("Could not read session ownership from $url")
+        }
+        return try {
+            gson.fromJson<List<Session>>(data, type)
+        } catch (e: Exception) {
+            throw IOException("Invalid session list from $url", e)
+        }
     }
 
     /**

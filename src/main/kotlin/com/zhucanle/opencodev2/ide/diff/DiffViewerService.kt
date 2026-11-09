@@ -40,6 +40,7 @@ open class DiffViewerService(private val project: Project) : Disposable {
         }
 
         val total = entries.size
+        val batch = DiffReviewBatch(entries)
         val requests = entries.mapIndexed { index, entry ->
             val fileType = FileTypeManager.getInstance().getFileTypeByFileName(entry.file)
             val title = "[${index + 1}/$total] ${entry.file}"
@@ -59,8 +60,8 @@ open class DiffViewerService(private val project: Project) : Disposable {
             
             // Add Accept/Reject actions
             request.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, listOf(
-                AcceptFromDiffEditorAction(entry.file),
-                RejectFromDiffEditorAction(entry)
+                AcceptFromDiffEditorAction(entry, batch),
+                RejectFromDiffEditorAction(entry, batch)
             ))
             
             request

@@ -33,7 +33,8 @@ class FakeOpenCodeServer(val port: Int) {
     private var currentDiffResponse = EMPTY_DIFF
 
     private var infoResponse = DEFAULT_INFO
-    private var sessionsResponse = """{"data":[]}"""
+    @Volatile private var sessionsResponse = """{"data":[]}"""
+    @Volatile private var sessionsStatus = 200
     private var activeSessionResponse = """{"data":{}}"""
 
     /** Query strings received on `GET /api/session/{id}/diff`. */
@@ -64,7 +65,7 @@ class FakeOpenCodeServer(val port: Int) {
             withAuth(ex) {
                 val path = ex.requestURI.path
                 when {
-                    path == "/api/session" -> respondJson(ex, 200, sessionsResponse)
+                    path == "/api/session" -> respondJson(ex, sessionsStatus, sessionsResponse)
                     path.endsWith("/diff") -> respondDiff(ex)
                     else -> respond(ex, 404, "not found", "text/plain")
                 }
@@ -104,8 +105,9 @@ class FakeOpenCodeServer(val port: Int) {
     }
 
     /** Provide the raw body of `GET /api/session?directory=...` (a `{data:[...]}` envelope). */
-    fun setSessions(json: String) {
+    fun setSessions(json: String, status: Int = 200) {
         sessionsResponse = json
+        sessionsStatus = status
     }
 
     /** Provide the raw body of `GET /api/session/active` (a `{data:...}` envelope). */

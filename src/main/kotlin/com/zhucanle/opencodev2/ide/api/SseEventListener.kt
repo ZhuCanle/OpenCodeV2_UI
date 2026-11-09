@@ -165,34 +165,27 @@ class SseEventListener(
             }
 
             override fun onResponse(call: Call, response: Response) {
-                if (!response.isSuccessful) {
-                    isConnected.set(false)
-                    val body = try { response.peekBody(1024).string() } catch (_: Exception) { "no body" }
-                    logger.error("[SSE] Handshake failed: HTTP ${response.code} (attempt #$reconnectAttemptCount). Response: $body")
-                    onError(handshakeError(response.code))
-                    onDisconnected()
-                    if (shouldReconnect.get()) scheduleReconnect()
-                    return
-                }
+                response.use {
+                    // Cancellation may happen while the handshake is in flight.
+                    if (call.isCanceled() || !shouldReconnect.get()) return
+                    if (!response.isSuccessful) {
+                        isConnected.set(false)
+                        val body = try { response.peekBody(1024).string() } catch (_: Exception) { "no body" }
+                        logger.warn("[SSE] Handshake failed: HTTP ${response.code} (attempt #$reconnectAttemptCount). Response: $body")
+                        onError(handshakeError(response.code))
+                        onDisconnected()
+                        if (shouldReconnect.get()) scheduleReconnect()
+                        return
+                    }
 
-                // The call may have been cancelled (or the listener disconnected) while the
-                // handshake was in flight; consuming the stream then would leak it.
-                if (call.isCanceled() || !shouldReconnect.get()) {
-                    response.close()
-                    return
-                }
-
-                isConnected.set(true)
-                reconnectAttemptCount = 0
-                onConnected()
-                logger.info("[SSE] Connection established")
-
-                response.body?.source()?.let { source ->
+                    isConnected.set(true)
+                    reconnectAttemptCount = 0
                     try {
-                        while (!source.exhausted() && !call.isCanceled() && shouldReconnect.get()) {
+                        onConnected()
+                        logger.info("[SSE] Connection established")
+                        val source = response.body?.source() ?: return
+                        while (!call.isCanceled() && shouldReconnect.get() && !source.exhausted()) {
                             val line = source.readUtf8Line() ?: break
-                            // Frames are either `data: <raw JSON object>` or `: heartbeat` comments;
-                            // only the data lines carry an event.
                             if (line.startsWith("data:")) {
                                 val json = line.substring(5).trim()
                                 if (json.isNotEmpty()) parseAndDispatchEvent(json)

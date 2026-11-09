@@ -52,6 +52,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 @Service(Service.Level.PROJECT)
 class OpenCodeService(private val project: Project) : Disposable {
@@ -173,6 +174,8 @@ class OpenCodeService(private val project: Project) : Disposable {
     private var password: String? = null
     private var apiClient: OpenCodeApiClient? = null
     private var sseListener: SseEventListener? = null
+    private val sseGeneration = AtomicInteger(0)
+    private var reviewEndpoint: Pair<String, Int>? = null
     private val isConnected = AtomicBoolean(false)
     private val isConnecting = AtomicBoolean(false)
     private var lastMode: ConnectionMode = ConnectionMode.NONE
@@ -407,20 +410,24 @@ class OpenCodeService(private val project: Project) : Disposable {
      * Loads the ids of this project's sessions so the location-less turn events can be attributed.
      *
      * The session list is filtered by `directory` on the server, so it is authoritative. A failure
-     * leaves the ownership check off ([sessionOwnershipKnown] stays false) instead of silently
-     * dropping the events of every pre-existing session.
+     * postpones the subscription until the connection manager can retry, rather than treating
+     * a failed request as an empty list or allowing unscoped events from other projects.
      *
      * Runs on the connection thread, before the stream opens, so no turn event can arrive first.
      */
-    private fun seedOwnedSessions(basePath: String) {
-        val client = apiClient ?: return
-        try {
+    private fun seedOwnedSessions(basePath: String, generation: Int): Boolean {
+        val client = apiClient ?: return false
+        return try {
             val sessions = client.getSessions(basePath)
+            if (generation != sseGeneration.get()) return false
+            ownedSessions.clear()
             ownedSessions.addAll(sessions.map { it.id })
             sessionOwnershipKnown = true
             logger.info("[OpenCode] ${sessions.size} sessions belong to this project")
+            true
         } catch (e: Exception) {
-            logger.warn("[OpenCode] Could not list the project's sessions; turn events stay unscoped", e)
+            logger.warn("[OpenCode] Could not list the project's sessions; retrying before subscribing", e)
+            false
         }
     }
 
@@ -506,9 +513,9 @@ class OpenCodeService(private val project: Project) : Disposable {
                     return@submit
                 }
 
-                sessionManager.updateKnownState(entries.map { it.file }, snapshot.scopeVersion)
+                sessionManager.updateKnownState(entries.map { it.file }, snapshot.scopeVersion, snapshot.turnVersion)
                 invokeLater {
-                    if (project.isDisposed || !sessionManager.isCurrentScope(snapshot.scopeVersion)) return@invokeLater
+                    if (project.isDisposed || !sessionManager.isCurrentTurn(snapshot)) return@invokeLater
                     logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${entries.size} diffs")
                     diffViewerService.showMultiFileDiff(entries)
                 }
@@ -531,6 +538,9 @@ class OpenCodeService(private val project: Project) : Disposable {
         // password (service discovery), and a null username used to make the SSE handshake
         // anonymous. Anonymous endpoints (no password) keep whatever username was set.
         if (pwd != null && username.isNullOrBlank()) username = ServerAuth.DEFAULT_USERNAME
+        val endpoint = apiHost to port
+        if (reviewEndpoint != null && reviewEndpoint != endpoint) sessionManager.clear()
+        reviewEndpoint = endpoint
         apiClient = OpenCodeApiClient(apiHost, port, username, pwd)
     }
 
@@ -660,17 +670,32 @@ class OpenCodeService(private val project: Project) : Disposable {
 
     private fun connectToSse() {
         val basePath = currentBasePath() ?: return
+        val generation = sseGeneration.incrementAndGet()
         sseListener?.disconnect()
+        sseListener = null
+        updateConnectionState(false)
         // Attribution must be ready before the first frame arrives: turn events carry no location.
-        seedOwnedSessions(basePath)
+        if (!seedOwnedSessions(basePath, generation) || generation != sseGeneration.get()) return
         apiClient?.let {
-            sseListener = it.createEventListener(
+            val listener = it.createEventListener(
                 basePath,
-                { handleEvent(it) },
-                { onSseError(it) },
-                { updateConnectionState(true) },
-                { updateConnectionState(false) }
-            ).apply { connect() }
+                { if (generation == sseGeneration.get()) handleEvent(it) },
+                { if (generation == sseGeneration.get()) onSseError(it) },
+                { if (generation == sseGeneration.get()) updateConnectionState(true) },
+                {
+                    if (generation == sseGeneration.get()) {
+                        updateConnectionState(false)
+                        // The connection manager must re-seed ownership before opening a new stream.
+                        sseListener?.disconnect()
+                    }
+                }
+            )
+            if (generation != sseGeneration.get()) {
+                listener.disconnect()
+                return
+            }
+            sseListener = listener
+            listener.connect()
         }
     }
 
@@ -695,7 +720,12 @@ class OpenCodeService(private val project: Project) : Disposable {
         )
     }
 
-    private fun updateConnectionState(connected: Boolean) { isConnected.set(connected) }
+    private fun updateConnectionState(connected: Boolean) {
+        if (isConnected.getAndSet(connected) && !connected) {
+            turnTracker.clearAll()
+            sessionManager.abandonActiveTurns()
+        }
+    }
     private fun sendNotification(
         title: String,
         content: String,
@@ -730,12 +760,14 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
 
     private fun disconnectAndReset() {
+        sseGeneration.incrementAndGet()
         connectionManagerTask?.cancel(true); sseListener?.disconnect(); isConnected.set(false); isConnecting.set(false)
         reconnectPolicy.reset()
         OpenCodeServiceDiscovery.clearCache()
         versionWarningShown = false
         authFailureNotified = false
         turnTracker.clearAll()
+        sessionManager.abandonActiveTurns()
         // The next connection may point at another service: drop the old ids and re-seed them from
         // the new endpoint's directory-scoped session list.
         ownedSessions.clear()
@@ -746,7 +778,8 @@ class OpenCodeService(private val project: Project) : Disposable {
         // Reset every piece of connection state, not just the endpoint: leaving a stale password
         // (and mode) behind made the state inconsistent and kept credentials in memory.
         port = null; hostname = "127.0.0.1"; username = null; password = null; activeBasePath = null
-        sessionManager.activeBasePath = null
+        // Retain the review root until applyBasePath chooses the next one. Reconnecting to the
+        // same custom directory must not invalidate already completed review snapshots.
     }
 
     /**

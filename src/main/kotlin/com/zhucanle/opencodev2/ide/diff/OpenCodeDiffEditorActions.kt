@@ -27,29 +27,31 @@ private fun closeCurrentDiffIfPossible(e: AnActionEvent) {
     FileEditorManager.getInstance(project).closeFile(virtualFile)
 }
 
-private fun openNextDiff(project: com.intellij.openapi.project.Project, previousIndex: Int, closeEvent: AnActionEvent?) {
-    // 1. 无论是否还有剩余，都先关闭当前窗口
+private fun openNextDiff(
+    project: com.intellij.openapi.project.Project,
+    batch: DiffReviewBatch,
+    previousIndex: Int,
+    closeEvent: AnActionEvent?
+) {
     if (closeEvent != null) {
         closeCurrentDiffIfPossible(closeEvent)
     }
 
-    val sessionManager = project.service<SessionManager>()
-    val remaining = sessionManager.getAllDiffEntries()
-
-    if (remaining.isEmpty()) {
-        return
-    }
-
-    // 2. 还有剩余 Diff，打开新的 Diff 窗口
-    val nextIndex = previousIndex.coerceIn(0, remaining.lastIndex)
-    
-    // 使用 invokeLater 确保关闭操作完成后再打开新窗口，体验更流畅
+    // Recheck after the close event: another turn may replace a snapshot before this runs.
     ApplicationManager.getApplication().invokeLater {
+        if (project.isDisposed) return@invokeLater
+        val remaining = batch.remaining(project.service<SessionManager>())
+        if (remaining.isEmpty()) return@invokeLater
+        val nextIndex = previousIndex.coerceIn(0, remaining.lastIndex)
         project.service<DiffViewerService>().showMultiFileDiff(remaining, nextIndex)
     }
 }
 
-class AcceptFromDiffEditorAction(private val filePath: String) : AnAction() {
+internal class AcceptFromDiffEditorAction(
+    private val displayedEntry: DiffEntry,
+    private val batch: DiffReviewBatch
+) : AnAction() {
+    private val filePath = displayedEntry.file
     init {
         templatePresentation.text = "Accept"
         templatePresentation.description = "Accept this change (git add)"
@@ -60,34 +62,37 @@ class AcceptFromDiffEditorAction(private val filePath: String) : AnAction() {
         val project = e.project ?: return
         val sessionManager = project.service<SessionManager>()
 
-        val before = sessionManager.getAllDiffEntries()
+        val before = batch.remaining(sessionManager)
         val previousIndex = findEntryIndex(before, filePath)
 
-        val entry = sessionManager.getDiffForFile(filePath)
-        if (entry != null) {
+        val entry = displayedEntry
+        if (sessionManager.getDiffForFile(filePath) === entry && sessionManager.isCurrentScope(entry.scopeVersion)) {
             // Use the callback to navigate after accept completes
             sessionManager.acceptDiff(entry) { success ->
                 if (success) {
-                    openNextDiff(project, previousIndex, e)
+                    openNextDiff(project, batch, previousIndex, e)
                 } else {
                     Messages.showWarningDialog(project, "Failed to stage $filePath", "Accept Failed")
                 }
             }
         } else {
             ApplicationManager.getApplication().invokeLater {
-                Messages.showWarningDialog(project, "Diff entry not found for $filePath", "Accept Failed")
+                Messages.showWarningDialog(project, "This diff is out of date. Review the latest diff before accepting.", "Accept Failed")
             }
         }
     }
 
     override fun update(e: AnActionEvent) {
         val project = e.project
-        val enabled = project != null && project.service<SessionManager>().getDiffForFile(filePath) != null
+        val enabled = project != null && project.service<SessionManager>().getDiffForFile(filePath) === displayedEntry
         e.presentation.isEnabled = enabled
     }
 }
 
-class RejectFromDiffEditorAction(private val displayedEntry: DiffEntry) : AnAction() {
+internal class RejectFromDiffEditorAction(
+    private val displayedEntry: DiffEntry,
+    private val batch: DiffReviewBatch
+) : AnAction() {
     private val filePath = displayedEntry.file
     init {
         templatePresentation.text = "Reject"
@@ -134,13 +139,13 @@ class RejectFromDiffEditorAction(private val displayedEntry: DiffEntry) : AnActi
 
         if (confirm != Messages.YES) return
 
-        val before = sessionManager.getAllDiffEntries()
+        val before = batch.remaining(sessionManager)
         val previousIndex = findEntryIndex(before, filePath)
 
         // Use the callback to navigate after reject completes (no more ProgressManager race)
         sessionManager.rejectDiff(entry) { success ->
             if (success) {
-                openNextDiff(project, previousIndex, e)
+                openNextDiff(project, batch, previousIndex, e)
             } else {
                 Messages.showWarningDialog(project,
                     "Could not restore $filePath. The file may have changed since this diff was captured. " +
@@ -152,6 +157,6 @@ class RejectFromDiffEditorAction(private val displayedEntry: DiffEntry) : AnActi
     override fun update(e: AnActionEvent) {
         val project = e.project
         val entry = if (project != null) project.service<SessionManager>().getDiffForFile(filePath) else null
-        e.presentation.isEnabled = entry != null
+        e.presentation.isEnabled = entry === displayedEntry
     }
 }
