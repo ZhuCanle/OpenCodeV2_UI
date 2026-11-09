@@ -79,6 +79,37 @@ class SessionManagerV2DiffTest {
      * collapse the diff into a no-op.
      */
     @Test
+    fun switchingDirectoryDiscardsPendingAndLateDiffResponses() {
+        val other = File(projectDir, "other").apply { mkdirs() }
+        writeDisk("a.kt", "AI edit")
+        sm.onTurnStart("session")
+        sm.onFileEdited("session", "a.kt")
+        val snapshot = checkNotNull(sm.onTurnEnd("session")).copy(
+            capturedBeforeContent = mapOf("a.kt" to "original")
+        )
+        val diffs = listOf(FileDiff("a.kt", "", 1, 1, status = "modified"))
+        assertEquals(1, sm.getProcessedDiffs(diffs, snapshot).size)
+        sm.activeBasePath = other.absolutePath
+        assertTrue(sm.getAllDiffEntries().isEmpty())
+        File(other, "a.kt").writeText("AI edit")
+        assertTrue(sm.getProcessedDiffs(diffs, snapshot).isEmpty())
+    }
+
+    @Test
+    fun customDirectoryDiffReadsTheSessionFileInsteadOfTheProjectFile() {
+        val sessionDir = File(projectDir, "session").apply { mkdirs() }
+        sm.activeBasePath = sessionDir.absolutePath
+        writeDisk("a.kt", "unrelated project file")
+        File(sessionDir, "a.kt").writeText("AI edit")
+        val entries = sm.getProcessedDiffs(
+            listOf(FileDiff("a.kt", "", 1, 1, status = "modified")),
+            snapshotWith(capturedBefore = mapOf("a.kt" to "original"), serverEdited = setOf("a.kt"))
+        )
+        assertEquals("AI edit", entries.single().resolvedAfter)
+        assertEquals(entries.single(), sm.getDiffForFile(File(sessionDir, "a.kt").absolutePath))
+    }
+
+    @Test
     fun missingFileWithCapturedContentIsNotAnAgentDeletion() {
         val entries = sm.getProcessedDiffs(
             emptyList(), snapshotWith(capturedBefore = mapOf("gone.kt" to "old"))

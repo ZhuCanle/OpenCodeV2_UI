@@ -87,7 +87,8 @@ class AcceptFromDiffEditorAction(private val filePath: String) : AnAction() {
     }
 }
 
-class RejectFromDiffEditorAction(private val filePath: String) : AnAction() {
+class RejectFromDiffEditorAction(private val displayedEntry: DiffEntry) : AnAction() {
+    private val filePath = displayedEntry.file
     init {
         templatePresentation.text = "Reject"
         templatePresentation.description = "Reject this change (restore original)"
@@ -98,7 +99,11 @@ class RejectFromDiffEditorAction(private val filePath: String) : AnAction() {
         val project = e.project ?: return
 
         val sessionManager = project.service<SessionManager>()
-        val entry: DiffEntry = sessionManager.getDiffForFile(filePath) ?: return
+        val entry = displayedEntry
+        if (sessionManager.getDiffForFile(filePath) !== entry) {
+            Messages.showWarningDialog(project, "This diff is out of date. Review the latest diff before rejecting.", "Reject Failed")
+            return
+        }
 
         // Build confirmation message based on file state
         val isNewFile = entry.isNewFile
@@ -137,7 +142,9 @@ class RejectFromDiffEditorAction(private val filePath: String) : AnAction() {
             if (success) {
                 openNextDiff(project, previousIndex, e)
             } else {
-                Messages.showWarningDialog(project, "Failed to restore $filePath", "Reject Failed")
+                Messages.showWarningDialog(project,
+                    "Could not restore $filePath. The file may have changed since this diff was captured. " +
+                        "Review the current file before rejecting.", "Reject Failed")
             }
         }
     }

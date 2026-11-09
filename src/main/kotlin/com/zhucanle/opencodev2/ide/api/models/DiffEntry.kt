@@ -26,7 +26,9 @@ data class DiffEntry(
     val hasUserEdits: Boolean = false,
     val resolvedBefore: String? = null,
     val isCreatedExplicitly: Boolean = false,
-    val resolvedAfter: String = ""
+    val resolvedAfter: String = "",
+    /** Identifies the working-directory scope that produced this snapshot. */
+    val scopeVersion: Int? = null
 ) {
     /** 
      * True if this is a newly created file. 

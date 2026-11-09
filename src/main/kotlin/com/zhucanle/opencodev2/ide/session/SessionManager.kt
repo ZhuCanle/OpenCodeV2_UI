@@ -53,7 +53,7 @@ open class SessionManager(private val project: Project) : Disposable {
      * for instance), so every turn owns its own change sets. Before, the state was global: the
      * second `session.execution.started` was ignored and its diffs were folded into the first turn.
      */
-    private class TurnState(val number: Int, val label: Label?) {
+    private class TurnState(val number: Int, val label: Label?, val scopeVersion: Int) {
         val vfsChangedFiles = ConcurrentHashMap.newKeySet<String>()
         val serverEditedFiles = ConcurrentHashMap.newKeySet<String>()
         val aiCreatedFiles = ConcurrentHashMap.newKeySet<String>()
@@ -98,12 +98,30 @@ open class SessionManager(private val project: Project) : Disposable {
 
     // ==================== Change Scope ====================
 
+    private val scopeLock = Any()
+    private val scopeVersion = AtomicInteger(0)
+
     /**
      * Working directory of the active session. It differs from [Project.getBasePath] when a custom
      * base path is configured, and file changes under it still belong to this window.
      */
     @Volatile
     var activeBasePath: String? = null
+        set(value) {
+            synchronized(scopeLock) {
+                val oldRoot = field ?: project.basePath
+                val newRoot = value ?: project.basePath
+                if (oldRoot != newRoot &&
+                    (oldRoot == null || newRoot == null || !PathUtil.sameDirectory(oldRoot, newRoot))) {
+                    clear()
+                }
+                field = value
+            }
+        }
+
+    private fun currentBasePath(): String? = activeBasePath ?: project.basePath
+
+    fun isCurrentScope(version: Int?): Boolean = version == null || version == scopeVersion.get()
 
     /** Which VFS changes this window may claim; see [ChangeScope]. */
     @VisibleForTesting
@@ -129,7 +147,7 @@ open class SessionManager(private val project: Project) : Disposable {
     private fun absolutePathOf(filePath: String): String? {
         val normalized = PathUtil.toSystemIndependentPath(filePath)
         if (File(normalized).isAbsolute) return normalized
-        return PathUtil.resolveProjectPath(project, normalized)
+        return PathUtil.resolveToSystemIndependentPath(currentBasePath(), normalized)
     }
 
     /** True when [filePath] (relative or absolute) belongs to this window's project. */
@@ -145,7 +163,7 @@ open class SessionManager(private val project: Project) : Disposable {
         return when (val verdict = changeScope.classify(file.path)) {
             ChangeScope.Verdict.TRACK -> true
             ChangeScope.Verdict.IGNORE_GIT_OPERATION -> {
-                val relativePath = PathUtil.relativizeToProject(project, file.path)
+                val relativePath = PathUtil.relativizeToProject(currentBasePath(), file.path)
                 // A pending diff captured before the operation no longer matches the file on disk.
                 pendingDiffs.remove(relativePath)
                 logger.info("[Git] Ignoring change caused by a git operation: $relativePath")
@@ -188,7 +206,7 @@ open class SessionManager(private val project: Project) : Disposable {
             if (!cmd.isNullOrEmpty()) {
                 FileDocumentManager.getInstance().getFile(event.document)?.let { file ->
                     if (!acceptsChange(file)) return@let
-                    val relativePath = PathUtil.relativizeToProject(project, file.path)
+                    val relativePath = PathUtil.relativizeToProject(currentBasePath(), file.path)
                     // A document change cannot be attributed to one session, so every active turn
                     // records it; each turn then filters its own diffs against that signal.
                     turns.values.forEach { it.userEditedFiles.add(relativePath) }
@@ -204,7 +222,7 @@ open class SessionManager(private val project: Project) : Disposable {
             onVfsChange(event.file)
             // Record creation event - will be cross-checked with serverEditedFiles later
             // to determine if it's truly AI-created or user-created
-            val relPath = PathUtil.relativizeToProject(project, event.file.path)
+            val relPath = PathUtil.relativizeToProject(currentBasePath(), event.file.path)
             if (turns.isEmpty()) {
                 lateAiCreatedFiles.add(relPath)
             } else {
@@ -247,7 +265,7 @@ open class SessionManager(private val project: Project) : Disposable {
             return
         }
 
-        val relativePath = PathUtil.relativizeToProject(project, file.path)
+        val relativePath = PathUtil.relativizeToProject(currentBasePath(), file.path)
 
         // Capture only for the turns that still need this file: we want the ORIGINAL state before
         // the first modification in the turn. Captures outside a turn are discarded, exactly like
@@ -292,7 +310,7 @@ open class SessionManager(private val project: Project) : Disposable {
 
     private fun onVfsChange(file: VirtualFile?) {
         if (file == null) return
-        val relativePath = PathUtil.relativizeToProject(project, file.path)
+        val relativePath = PathUtil.relativizeToProject(currentBasePath(), file.path)
         if (turns.isEmpty()) {
             // Gap: remember it so the next turn's baseline includes the change.
             if (gapChangedFiles.add(relativePath)) {
@@ -316,6 +334,7 @@ open class SessionManager(private val project: Project) : Disposable {
      * @return true when a new turn was started; false when that session already has one running
      */
     open fun onTurnStart(sessionId: String): Boolean {
+        val version = scopeVersion.get()
         if (turns.containsKey(sessionId)) {
             logger.info("[Session $sessionId] onTurnStart: already busy, ignored")
             return false
@@ -333,9 +352,12 @@ open class SessionManager(private val project: Project) : Disposable {
         lateAiCreatedFiles.clear()
 
         val number = turnCounter.incrementAndGet()
-        val state = TurnState(number, createSystemLabel("OpenCode Turn #$number Start"))
+        val state = TurnState(number, createSystemLabel("OpenCode Turn #$number Start"), version)
         state.knownAtStart = HashMap(lastKnownFileStates)
-        turns[sessionId] = state
+        synchronized(scopeLock) {
+            if (version != scopeVersion.get()) return false
+            turns[sessionId] = state
+        }
 
         logger.info("[Turn #$number] STARTED (session $sessionId)")
         return true
@@ -357,7 +379,7 @@ open class SessionManager(private val project: Project) : Disposable {
         // the NEXT turn can use it as its 'Before' state (especially after a deletion, where
         // LocalHistory may have nothing).
         (state.vfsChangedFiles + state.serverEditedFiles + state.aiCreatedFiles).forEach { relativePath ->
-            updateKnownState(listOf(relativePath))
+            updateKnownState(listOf(relativePath), state.scopeVersion)
         }
 
         val snapshot = TurnSnapshot(
@@ -368,7 +390,8 @@ open class SessionManager(private val project: Project) : Disposable {
             userEditedFiles = state.userEditedFiles.toSet(),
             baselineLabel = state.label,
             knownFileStates = state.knownAtStart,
-            capturedBeforeContent = HashMap(state.capturedBeforeContent)
+            capturedBeforeContent = HashMap(state.capturedBeforeContent),
+            scopeVersion = state.scopeVersion
         )
 
         logger.info(
@@ -387,7 +410,7 @@ open class SessionManager(private val project: Project) : Disposable {
             logger.info("[Scope] Ignoring server-reported edit outside the project: $filePath")
             return
         }
-        val relativePath = PathUtil.relativizeToProject(project, filePath)
+        val relativePath = PathUtil.relativizeToProject(currentBasePath(), filePath)
         val state = turns[sessionId]
         if (state == null) {
             logger.debug("[Session $sessionId] Server reported an edit outside a turn: $relativePath")
@@ -432,6 +455,8 @@ open class SessionManager(private val project: Project) : Disposable {
         extraVfsEvents: Set<String> = emptySet(),
         extraAiCreatedFiles: Set<String> = emptySet()
     ): List<DiffEntry> {
+        val version = snapshot.scopeVersion ?: scopeVersion.get()
+        if (version != scopeVersion.get()) return emptyList()
         logger.info("[Turn #${snapshot.turnNumber}] Processing diffs (Server: ${serverDiffs.size})")
         logger.info("[Turn #${snapshot.turnNumber}] Snapshot state:")
         logger.info("[Turn #${snapshot.turnNumber}]   vfsChangedFiles: ${snapshot.vfsChangedFiles}")
@@ -450,7 +475,7 @@ open class SessionManager(private val project: Project) : Disposable {
         // Files a git operation rewrote are not agent edits. The server may still report them (its
         // diff is a plain working-tree comparison), so they are dropped before anything else.
         val gitTouchedKeys = changeScope.gitTouchedPaths()
-            .map { PathUtil.relativizeToProject(project, it) }
+            .map { PathUtil.relativizeToProject(currentBasePath(), it) }
             .toSet()
 
         val scopedServerDiffs = serverDiffs.filter { diff ->
@@ -536,7 +561,7 @@ open class SessionManager(private val project: Project) : Disposable {
                 return@filter false
             }
 
-            val absPath = PathUtil.resolveProjectPath(project, vfsFile) ?: return@filter false
+            val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), vfsFile) ?: return@filter false
             val exists = File(absPath).exists()
 
             // Determine if this is truly an AI operation by checking various signals
@@ -604,7 +629,8 @@ open class SessionManager(private val project: Project) : Disposable {
                 hasUserEdits = diff.file in snapshot.userEditedFiles,
                 isCreatedExplicitly = diff.file in snapshot.aiCreatedFiles,
                 resolvedBefore = resolvedBefore,
-                resolvedAfter = resolveAfter(diff.file)
+                resolvedAfter = resolveAfter(diff.file),
+                scopeVersion = version
             )
         }
 
@@ -663,7 +689,10 @@ open class SessionManager(private val project: Project) : Disposable {
         }
 
         // 4. Store Pending
-        filteredEntries.forEach { pendingDiffs[it.file] = it }
+        synchronized(scopeLock) {
+            if (version != scopeVersion.get()) return emptyList()
+            filteredEntries.forEach { pendingDiffs[it.file] = it }
+        }
         
         return filteredEntries
     }
@@ -679,7 +708,7 @@ open class SessionManager(private val project: Project) : Disposable {
     private fun createSyntheticDiff(relativePath: String, snapshot: TurnSnapshot): FileDiff? {
         logger.info("[SyntheticDiff] Creating for: $relativePath")
 
-        val absPath = PathUtil.resolveProjectPath(project, relativePath)
+        val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), relativePath)
         if (absPath == null) {
             logger.info("[SyntheticDiff] $relativePath -> SKIP: Cannot resolve path")
             return null
@@ -762,7 +791,7 @@ open class SessionManager(private val project: Project) : Disposable {
      * 3. Known State (Memory)
      */
     fun getSnapshotBeforeContent(relativePath: String, snapshot: TurnSnapshot): String? {
-        val absPath = PathUtil.resolveProjectPath(project, relativePath)
+        val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), relativePath)
 
         // 1. Captured Content (Highest Priority)
         snapshot.capturedBeforeContent[relativePath]?.let {
@@ -801,21 +830,26 @@ open class SessionManager(private val project: Project) : Disposable {
         return lastKnownFileStates.keys.filter { isOwnedChange(it) }.toSet()
     }
 
-    fun updateKnownState(files: List<String>) {
+    fun updateKnownState(files: List<String>, expectedVersion: Int? = null) {
+        val version = expectedVersion ?: scopeVersion.get()
+        if (!isCurrentScope(version)) return
         files.forEach { rawPath ->
             if (!isOwnedChange(rawPath)) {
                 logger.debug("[Scope] Ignoring known state outside the project: $rawPath")
                 return@forEach
             }
-            val absPath = PathUtil.resolveProjectPath(project, rawPath)
+            val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), rawPath)
             if (absPath != null) {
                 val file = File(absPath)
                 if (file.exists() && file.isFile) {
-                    val relativePath = PathUtil.relativizeToProject(project, absPath)
+                    val relativePath = PathUtil.relativizeToProject(currentBasePath(), absPath)
                     try {
                         val content = file.readText()
                         // Ensure we store using the canonical relative path key
-                        lastKnownFileStates[relativePath] = content
+                        synchronized(scopeLock) {
+                            if (!isCurrentScope(version)) return
+                            lastKnownFileStates[relativePath] = content
+                        }
                         logger.info("[Turn ${turnNumbers()}] Updated known state (late refresh) for $relativePath")
                     } catch (e: Exception) {
                         logger.warn("[Turn ${turnNumbers()}] Failed to update known state for $relativePath: ${e.message}")
@@ -836,7 +870,7 @@ open class SessionManager(private val project: Project) : Disposable {
      * 4. Otherwise nothing is known about the previous state -> empty.
      */
     fun resolveBeforeContent(relativePath: String, diff: FileDiff, snapshot: TurnSnapshot): String? {
-        val absPath = PathUtil.resolveProjectPath(project, relativePath)
+        val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), relativePath)
 
         // 1. Server status says the file was created in this turn: nothing existed before it.
         if (diff.newFile) {
@@ -876,7 +910,7 @@ open class SessionManager(private val project: Project) : Disposable {
      *         (a deleted file therefore reports an empty "after").
      */
     private fun deriveAfter(relativePath: String): String {
-        val absPath = PathUtil.resolveProjectPath(project, relativePath) ?: return ""
+        val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), relativePath) ?: return ""
         val file = File(absPath)
         if (!file.exists() || !file.isFile) return ""
         return try {
@@ -894,13 +928,24 @@ open class SessionManager(private val project: Project) : Disposable {
      */
     fun acceptDiff(entry: DiffEntry, onComplete: ((Boolean) -> Unit)? = null) {
         val path = entry.file
+        val (basePath, version) = synchronized(scopeLock) {
+            if (!isCurrentScope(entry.scopeVersion)) {
+                onComplete?.let { cb -> ApplicationManager.getApplication().invokeLater { cb(false) } }
+                return
+            }
+            currentBasePath() to scopeVersion.get()
+        }
         logger.info("[SessionManager] Accept: $path")
 
         AppExecutorUtil.getAppExecutorService().submit {
+            if (!isCurrentScope(version)) {
+                onComplete?.let { cb -> ApplicationManager.getApplication().invokeLater { cb(false) } }
+                return@submit
+            }
             var success = false
             try {
                 val cmd = GeneralCommandLine("git", "add", path)
-                    .withWorkDirectory(project.basePath)
+                    .withWorkDirectory(basePath)
                 val handler = OSProcessHandler(cmd)
                 handler.startNotify()
                 val finished = handler.waitFor(5000)
@@ -908,15 +953,13 @@ open class SessionManager(private val project: Project) : Disposable {
                 success = finished && exitCode == 0
                 
                 if (success) {
-                    pendingDiffs.remove(path)
                     logger.info("[SessionManager] Accepted: $path")
                 } else {
                     // Special case: File deleted and likely untracked (git add fails with 128)
                     // If the file is gone from disk, we can consider the "delete" accepted.
-                    val absPath = PathUtil.resolveProjectPath(project, path)
+                    val absPath = PathUtil.resolveToSystemIndependentPath(basePath, path)
                     if (exitCode == 128 && absPath != null && !File(absPath).exists()) {
                         logger.info("[SessionManager] Git add failed (128) but file is deleted. Treating as success.")
-                        pendingDiffs.remove(path)
                         success = true // Mark as success for callback
                     } else {
                         logger.warn("[SessionManager] Git add failed: exitCode=$exitCode")
@@ -926,8 +969,13 @@ open class SessionManager(private val project: Project) : Disposable {
                 logger.error("[SessionManager] Accept failed: $path", e)
             }
 
+            synchronized(scopeLock) {
+                success = success && isCurrentScope(version)
+                if (success) pendingDiffs.remove(path, entry)
+            }
+
             onComplete?.let { cb ->
-                ApplicationManager.getApplication().invokeLater { cb(success) }
+                ApplicationManager.getApplication().invokeLater { cb(success && isCurrentScope(version)) }
             }
         }
     }
@@ -937,7 +985,7 @@ open class SessionManager(private val project: Project) : Disposable {
      */
     fun rejectDiff(entry: DiffEntry, onComplete: ((Boolean) -> Unit)? = null) {
         val path = entry.file
-        val absPath = PathUtil.resolveProjectPath(project, path)
+        val absPath = PathUtil.resolveToSystemIndependentPath(currentBasePath(), path)
         
         if (absPath == null) {
             logger.warn("[SessionManager] Reject: cannot resolve path: $path")
@@ -952,8 +1000,24 @@ open class SessionManager(private val project: Project) : Disposable {
         ApplicationManager.getApplication().invokeLater {
             var success = false
             runWriteAction {
+                synchronized(scopeLock) {
                 try {
                     val vf = LocalFileSystem.getInstance().refreshAndFindFileByPath(absPath)
+
+                    // Check inside the write action, including unsaved editor changes. A displayed
+                    // snapshot is not permission to overwrite edits made after it was captured.
+                    val pending = pendingDiffs[path]
+                    val onDisk = vf?.let { String(it.contentsToByteArray(), Charsets.UTF_8) }
+                    val document = vf?.let { FileDocumentManager.getInstance().getCachedDocument(it) }
+                    val expectedExists = !entry.diff.deleted
+                    if ((entry.scopeVersion != null && entry.scopeVersion != scopeVersion.get()) ||
+                        (pending != null && pending != entry) ||
+                        (vf != null) != expectedExists ||
+                        (onDisk != null && onDisk != entry.resolvedAfter) ||
+                        (document != null && document.text != entry.resolvedAfter)) {
+                        logger.warn("[SessionManager] Reject refused: $path changed since this diff was captured")
+                        return@runWriteAction
+                    }
                     
                     when {
                         vf != null && entry.isNewFile -> {
@@ -1010,6 +1074,7 @@ open class SessionManager(private val project: Project) : Disposable {
                 } catch (e: Exception) {
                     logger.error("[SessionManager] Reject failed: $path", e)
                 }
+                }
             }
 
             onComplete?.invoke(success)
@@ -1019,7 +1084,7 @@ open class SessionManager(private val project: Project) : Disposable {
     // ==================== Queries ====================
 
     fun getDiffForFile(path: String): DiffEntry? {
-        val relativePath = PathUtil.relativizeToProject(project, path)
+        val relativePath = PathUtil.relativizeToProject(currentBasePath(), path)
         return pendingDiffs[relativePath]
     }
 
@@ -1034,7 +1099,8 @@ open class SessionManager(private val project: Project) : Disposable {
 
     // ==================== Lifecycle ====================
 
-    fun clear() {
+    fun clear() = synchronized(scopeLock) {
+        scopeVersion.incrementAndGet()
         turns.clear()
         gapChangedFiles.clear()
         lateVfsChangedFiles.clear()
@@ -1062,5 +1128,6 @@ data class TurnSnapshot(
     val userEditedFiles: Set<String>,
     val baselineLabel: Label?,
     val knownFileStates: Map<String, String> = emptyMap(),
-    val capturedBeforeContent: Map<String, String> = emptyMap()
+    val capturedBeforeContent: Map<String, String> = emptyMap(),
+    val scopeVersion: Int? = null
 )

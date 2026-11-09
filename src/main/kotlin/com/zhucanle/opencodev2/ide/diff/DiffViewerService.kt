@@ -60,7 +60,7 @@ open class DiffViewerService(private val project: Project) : Disposable {
             // Add Accept/Reject actions
             request.putUserData(DiffUserDataKeys.CONTEXT_ACTIONS, listOf(
                 AcceptFromDiffEditorAction(entry.file),
-                RejectFromDiffEditorAction(entry.file)
+                RejectFromDiffEditorAction(entry)
             ))
             
             request

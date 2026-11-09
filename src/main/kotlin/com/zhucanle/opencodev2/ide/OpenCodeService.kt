@@ -383,7 +383,7 @@ class OpenCodeService(private val project: Project) : Disposable {
                 // The step can arrive after onTurnEnd froze the snapshot. Carry its scoped file
                 // claims through the barrier before onMessageId can start the diff pipeline.
                 val files = event.files.filter { sessionManager.isOwnedChange(it) }
-                    .map { PathUtil.relativizeToProject(project, it) }.toSet()
+                    .map { PathUtil.relativizeToProject(currentBasePath(), it) }.toSet()
                 event.assistantMessageID?.let { turnTracker.onMessageId(sessionId, it, files) }
             }
             else -> {}
@@ -457,7 +457,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         if (files.isEmpty()) return
         try {
             val ioFiles = files.mapNotNull { relativePath ->
-                PathUtil.resolveProjectPath(project, relativePath)?.let { absolutePath ->
+                PathUtil.resolveToSystemIndependentPath(currentBasePath(), relativePath)?.let { absolutePath ->
                     val ioFile = java.io.File(absolutePath)
                     // A deleted file is not refreshable; refresh its parent so the deletion is seen.
                     if (!ioFile.exists()) ioFile.parentFile else ioFile
@@ -481,7 +481,7 @@ class OpenCodeService(private val project: Project) : Disposable {
      */
     private fun fetchAndShowDiffs(sessionId: String, snapshot: TurnSnapshot) {
         val client = apiClient ?: return
-        val path = project.basePath ?: return
+        val path = currentBasePath() ?: return
 
         AppExecutorUtil.getAppExecutorService().submit {
             try {
@@ -506,9 +506,9 @@ class OpenCodeService(private val project: Project) : Disposable {
                     return@submit
                 }
 
-                sessionManager.updateKnownState(entries.map { it.file })
+                sessionManager.updateKnownState(entries.map { it.file }, snapshot.scopeVersion)
                 invokeLater {
-                    if (project.isDisposed) return@invokeLater
+                    if (project.isDisposed || !sessionManager.isCurrentScope(snapshot.scopeVersion)) return@invokeLater
                     logger.info("[OpenCode] Turn #${snapshot.turnNumber} Showing ${entries.size} diffs")
                     diffViewerService.showMultiFileDiff(entries)
                 }
@@ -546,7 +546,7 @@ class OpenCodeService(private val project: Project) : Disposable {
         if (isConnected.get() || !isConnecting.compareAndSet(false, true)) return
         try {
             val client = apiClient
-            val basePath = project.basePath
+            val basePath = currentBasePath()
             if (client != null && basePath != null) {
                 if (client.checkHealth(basePath)) {
                     // Version gate is non-blocking; the credential probe is not: a wrong/missing
@@ -659,7 +659,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     }
 
     private fun connectToSse() {
-        val basePath = project.basePath ?: return
+        val basePath = currentBasePath() ?: return
         sseListener?.disconnect()
         // Attribution must be ready before the first frame arrives: turn events carry no location.
         seedOwnedSessions(basePath)
@@ -823,6 +823,8 @@ class OpenCodeService(private val project: Project) : Disposable {
         sessionManager.activeBasePath = customBasePath
     }
 
+    private fun currentBasePath(): String? = activeBasePath ?: project.basePath
+
     /**
      * Opens the web tab and remembers it.
      *
@@ -856,11 +858,13 @@ class OpenCodeService(private val project: Project) : Disposable {
                 showServiceUnavailableError()
                 return@submit
             }
+            if (project.isDisposed) return@submit
+            // Publish connection state before either the UI or the connection manager can use it.
+            hostname = endpoint.host; port = endpoint.port; password = endpoint.password
+            username = ServerAuth.DEFAULT_USERNAME
+            applyBasePath(customBasePath)
             ApplicationManager.getApplication().invokeLater {
                 if (project.isDisposed) return@invokeLater
-                hostname = endpoint.host; port = endpoint.port; password = endpoint.password
-                username = ServerAuth.DEFAULT_USERNAME
-                applyBasePath(customBasePath)
                 // Web mode opens the web tab alone: creating the terminal TUI as well used to leave
                 // a second, unused terminal tab behind. The terminal only takes over when the tab
                 // cannot be opened.
@@ -921,7 +925,7 @@ class OpenCodeService(private val project: Project) : Disposable {
     private fun createTerminalUIInternal(p: Int, cont: Boolean = true, command: String? = null, customBasePath: String? = null) {
         val t = "$OPEN_CODE_TAB_PREFIX($p)"
         applyBasePath(customBasePath)
-        val wd = customBasePath ?: project.basePath
+        val wd = currentBasePath()
         // createLocalShellWidget() is deprecated; it only wraps createShellWidget(.., true, true) in
         // a ShellTerminalWidget cast, so call the supported API directly and convert explicitly.
         val w = ShellTerminalWidget.toShellJediTermWidgetOrThrow(
