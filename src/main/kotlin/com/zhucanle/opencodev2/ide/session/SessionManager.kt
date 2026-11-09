@@ -54,7 +54,13 @@ open class SessionManager(private val project: Project) : Disposable {
      * for instance), so every turn owns its own change sets. Before, the state was global: the
      * second `session.execution.started` was ignored and its diffs were folded into the first turn.
      */
-    private class TurnState(val number: Int, val label: Label?, val scopeVersion: Int, val turnVersion: Int) {
+    private class TurnState(
+        val number: Int,
+        val label: Label?,
+        val scopeVersion: Int,
+        val turnVersion: Int,
+        val gitCheckout: GitCheckoutBaseline?
+    ) {
         val vfsChangedFiles = ConcurrentHashMap.newKeySet<String>()
         val serverEditedFiles = ConcurrentHashMap.newKeySet<String>()
         val aiCreatedFiles = ConcurrentHashMap.newKeySet<String>()
@@ -358,7 +364,8 @@ open class SessionManager(private val project: Project) : Disposable {
         lateAiCreatedFiles.clear()
 
         val number = turnCounter.incrementAndGet()
-        val state = TurnState(number, createSystemLabel("OpenCode Turn #$number Start"), version, generation)
+        val checkout = GitCheckoutBaseline.capture(currentBasePath())
+        val state = TurnState(number, createSystemLabel("OpenCode Turn #$number Start"), version, generation, checkout)
         state.knownAtStart = HashMap(lastKnownFileStates)
         synchronized(scopeLock) {
             if (version != scopeVersion.get() || generation != turnVersion.get()) return false
@@ -398,7 +405,8 @@ open class SessionManager(private val project: Project) : Disposable {
             knownFileStates = state.knownAtStart,
             capturedBeforeContent = HashMap(state.capturedBeforeContent),
             scopeVersion = state.scopeVersion,
-            turnVersion = state.turnVersion
+            turnVersion = state.turnVersion,
+            gitCheckout = state.gitCheckout
         )
 
         logger.info(
@@ -457,6 +465,90 @@ open class SessionManager(private val project: Project) : Disposable {
      * @param extraAiCreatedFiles Additional AI created files (from post-turn refresh).
      */
     fun getProcessedDiffs(
+        serverDiffs: List<FileDiff>,
+        snapshot: TurnSnapshot,
+        extraVfsEvents: Set<String> = emptySet(),
+        extraAiCreatedFiles: Set<String> = emptySet()
+    ): List<DiffEntry> {
+        if (!isCurrentTurn(snapshot)) return emptyList()
+        val baseline = snapshot.gitCheckout
+        val checkout = baseline?.latestCheckout()
+        if (baseline == null || checkout == null) {
+            return processDiffs(serverDiffs, snapshot, extraVfsEvents, extraAiCreatedFiles)
+        }
+
+        logger.info("[Turn #${snapshot.turnNumber}] Checkout detected; comparing against ${checkout.revision}")
+        val claims = snapshot.serverEditedFiles.toMutableSet()
+        val captured = snapshot.capturedBeforeContent.toMutableMap()
+        val created = snapshot.aiCreatedFiles.toMutableSet()
+        val adjusted = serverDiffs.associateBy { it.file }.toMutableMap()
+        for (path in snapshot.serverEditedFiles) {
+            val absolute = absolutePathOf(path) ?: continue
+            if (!PathUtil.isUnder(baseline.root, absolute)) continue
+            val target = baseline.readFile(checkout.revision, absolute)
+            val original = baseline.readFile(baseline.revision, absolute)
+            if (target == null || original == null) {
+                claims.remove(path)
+                adjusted.remove(path)
+                continue
+            }
+            val file = File(absolute)
+            val after = deriveAfter(path)
+            val checkoutOnly = file.exists() == target.exists && after == target.content
+            if (target == original) {
+                // A -> B -> A may delete/recreate a tracked file. Its VFS creation flag and
+                // server "added" status are not evidence that the agent created a new file.
+                if (target.exists) {
+                    created.remove(path)
+                    val status = if (file.exists()) "modified" else "deleted"
+                    adjusted[path] = FileDiff(path, "", 0, 0, status)
+                }
+                continue
+            }
+            if (checkoutOnly) {
+                claims.remove(path)
+                adjusted.remove(path)
+                continue
+            }
+            val before = getSnapshotBeforeContent(path, snapshot)
+            // VFS/Document baselines normalize CRLF even when Git checks out CRLF bytes.
+            val normalizedBefore = before?.let { StringUtil.convertLineSeparators(it) }
+            val cleanOriginal = normalizedBefore == StringUtil.convertLineSeparators(original.content) ||
+                (!original.exists && before == null)
+            val capturedAfterCheckout = target.exists &&
+                normalizedBefore == StringUtil.convertLineSeparators(target.content)
+            if (!cleanOriginal && !capturedAfterCheckout) {
+                // Dirty carried-over content has no trustworthy post-checkout baseline. Never
+                // offer a Reject that could replace it with a different branch's committed text.
+                claims.remove(path)
+                adjusted.remove(path)
+                continue
+            }
+            captured[path] = target.content
+            created.remove(path)
+            val status = when {
+                !file.exists() -> "deleted"
+                !target.exists -> "added"
+                else -> "modified"
+            }
+            if (status == "added") created.add(path)
+            adjusted[path] = FileDiff(path, "", 0, 0, status)
+        }
+        val rebased = snapshot.copy(
+            serverEditedFiles = claims,
+            capturedBeforeContent = captured,
+            aiCreatedFiles = created
+        )
+        if (baseline.latestCheckout() != checkout || !isCurrentTurn(snapshot)) return emptyList()
+        val entries = processDiffs(adjusted.values.toList(), rebased, extraVfsEvents, extraAiCreatedFiles)
+        if (baseline.latestCheckout() != checkout) {
+            entries.forEach { pendingDiffs.remove(it.file, it) }
+            return emptyList()
+        }
+        return entries
+    }
+
+    private fun processDiffs(
         serverDiffs: List<FileDiff>, 
         snapshot: TurnSnapshot, 
         extraVfsEvents: Set<String> = emptySet(),
@@ -1144,5 +1236,6 @@ data class TurnSnapshot(
     val knownFileStates: Map<String, String> = emptyMap(),
     val capturedBeforeContent: Map<String, String> = emptyMap(),
     val scopeVersion: Int? = null,
-    val turnVersion: Int? = null
+    val turnVersion: Int? = null,
+    val gitCheckout: GitCheckoutBaseline? = null
 )

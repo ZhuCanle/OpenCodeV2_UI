@@ -1,27 +1,22 @@
-<!-- 16x16 action / tool window icon for light themes.
-     Same mark and "v2" knockout as the plugin logo. The platform swaps in the
-     `opencode_dark.svg` sibling automatically when the current theme is dark. -->
-<!-- The viewBox is cropped to the mark's own bounds (y 6..36) so the icon uses the
-     full 16x16 box; the upstream icon left a sixth of the height empty, which made the
-     mark - and with it the "v2" knockout - needlessly small. -->
+<!-- Light-theme tool window icon with the original mark and outlined v2 lettering. -->
 <svg width="16" height="16" viewBox="0 6 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
       <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>
-      <!-- Same "v2" letterforms as pluginIcon.svg, placed over the solid bottom-right
-           area of the mark. The glyphs are scaled up and the "2" is drawn a bit bolder
-           than in the 40px logo so they still read in a 16px icon. -->
       <g transform="translate(6.3 25.15)">
         <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#000000"/>
-        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" fill="none" stroke="#000000"
-              stroke-width="2.2" stroke-linecap="butt" stroke-linejoin="miter"/>
+        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#000000" stroke-width="2.2"/>
       </g>
     </mask>
   </defs>
-  <!-- Official light-logo brand colours (frame #211E1E, inner block #CFCECD), same as the
-       plugin logo, so the mark reads as a frame with a soft window instead of a solid shape. -->
   <g mask="url(#v2)">
     <path d="M18 30H6V18H18V30Z" fill="#CFCECD"/>
     <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#211E1E"/>
+  </g>
+  <g transform="translate(6.3 25.15)" stroke-linejoin="round">
+    <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#211E1E" stroke="#211E1E" stroke-width="0.9"/>
+    <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#211E1E" stroke-width="3.1"/>
+    <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#FFFFFF"/>
+    <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#FFFFFF" stroke-width="2.2" stroke-linejoin="miter"/>
   </g>
 </svg>

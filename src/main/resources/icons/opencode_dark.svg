@@ -1,21 +1,22 @@
-<!-- 16x16 action / tool window icon for dark themes: same geometry as `opencode.svg`,
-     white ink so the mark and the "v2" knockout stay readable on dark backgrounds. -->
-<!-- Same geometry and cropped viewBox as `opencode.svg`; white ink for dark themes. -->
+<!-- Dark-theme tool window icon with the original mark and outlined v2 lettering. -->
 <svg width="16" height="16" viewBox="0 6 24 30" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <mask id="v2" maskUnits="userSpaceOnUse" x="-2" y="-2" width="28" height="40">
       <rect x="-2" y="-2" width="28" height="40" fill="#FFFFFF"/>
       <g transform="translate(6.3 25.15)">
         <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#000000"/>
-        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" fill="none" stroke="#000000"
-              stroke-width="2.2" stroke-linecap="butt" stroke-linejoin="miter"/>
+        <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#000000" stroke-width="2.2"/>
       </g>
     </mask>
   </defs>
-  <!-- Official dark-logo brand colours (frame #F1ECEC, inner block #4B4646): a light frame
-       with a dark window, matching the plugin logo on dark backgrounds. -->
   <g mask="url(#v2)">
     <path d="M18 30H6V18H18V30Z" fill="#4B4646"/>
     <path d="M18 12H6V30H18V12ZM24 36H0V6H24V36Z" fill="#F1ECEC"/>
+  </g>
+  <g transform="translate(6.3 25.15)" stroke-linejoin="round">
+    <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#F1ECEC" stroke="#F1ECEC" stroke-width="0.9"/>
+    <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#F1ECEC" stroke-width="3.1"/>
+    <path d="M-0.4 0 H1.6 L3.6 5.5 L5.6 0 H7.6 L4.3 9.2 H2.9 Z" fill="#2B2D30"/>
+    <path d="M8.5 0.95 H14.75 V4.6 H9.45 V8.25 H15.7" stroke="#2B2D30" stroke-width="2.2" stroke-linejoin="miter"/>
   </g>
 </svg>
